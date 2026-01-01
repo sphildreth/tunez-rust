@@ -86,3 +86,59 @@ Before proposing a change as “done”, ensure:
 ## 9) When Editing Multiple Files
 - Explain the change set at a high level.
 - Keep refactors scoped: “make it compile” first, then improve incrementally.
+
+## 10) Build and Test Commands Reference
+
+### Quality Gates (Required Before Merge)
+```bash
+cargo fmt              # Format code
+cargo clippy -D warnings  # Lint with warnings as errors
+cargo test             # Run all tests
+cargo build --all-features  # Verify feature compilation
+cargo build --release  # Verify optimized build
+```
+
+### Running Individual Package Tests
+```bash
+# Test specific package
+cargo test -p tunez-core
+cargo test -p tunez-cli
+
+# Run with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_config_validation
+```
+
+### Build Commands
+```bash
+# Development build
+cargo build
+
+# Release build (optimized)
+cargo build --release
+
+# Run the binary during development
+cargo run -p tunez-cli
+
+# Run with arguments
+cargo run -p tunez-cli -- --help
+```
+
+## 11) Documentation Cross-References
+- **PRD and Requirements:** `docs/tunez-requirements.md` — Source of truth for features and acceptance criteria
+- **Technical Design:** `docs/tunez-design.md` — Architecture, data flow, interfaces, error handling
+- **TUI Mockups:** `docs/tunez-tui-mockups.md` — Canonical UI layout and navigation patterns
+- **Provider PRDs:**
+  - `docs/filesystem-provider-prd.md` — Local file provider specification
+  - `docs/melodee-provider-prd.md` — Remote API provider specification
+
+## 12) Instruction Files
+Domain-specific guidance is available in `.github/instructions/`:
+- `rust.instructions.md` — Rust language best practices
+- `ratatui-tui.instructions.md` — TUI development with ratatui
+- `provider-development.instructions.md` — Implementing music providers
+- `security-and-owasp.instructions.md` — Security guidelines
+- `github-actions-ci-cd-best-practices.instructions.md` — CI/CD workflows
+- `spec-driven-workflow-v1.instructions.md` — Development workflow and documentation standards
