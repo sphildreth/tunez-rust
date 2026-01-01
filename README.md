@@ -36,6 +36,37 @@ cargo test
 cargo run -p tunez-cli
 ```
 
+## Running the executable (`tunez`)
+
+The runnable binary name is `tunez`.
+
+Run via Cargo (recommended during development):
+
+```bash
+# Equivalent; the package is src/tunez-cli and it builds the `tunez` binary
+cargo run -p tunez-cli
+
+# Explicitly name the binary
+cargo run -p tunez-cli --bin tunez
+```
+
+Run the built binary directly:
+
+```bash
+cargo build -p tunez-cli
+./target/debug/tunez
+
+cargo build -p tunez-cli --release
+./target/release/tunez
+```
+
+Install `tunez` onto your PATH:
+
+```bash
+cargo install --path src/tunez-cli
+tunez
+```
+
 ## Workspace layout (in progress)
 
 - `src/tunez-core/` — shared utilities (config loading, logging bootstrap, app paths)
