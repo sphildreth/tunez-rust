@@ -20,30 +20,36 @@ pub struct PlaylistPagedResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct PaginationMetadata {
-    pub totalCount: Option<u32>,
-    pub pageSize: Option<u32>,
-    pub currentPage: Option<u32>,
-    pub totalPages: Option<u32>,
-    pub hasPrevious: Option<bool>,
-    pub hasNext: Option<bool>,
+    #[serde(rename = "totalCount")]
+    pub total_count: Option<u32>,
+    #[serde(rename = "pageSize")]
+    pub page_size: Option<u32>,
+    #[serde(rename = "currentPage")]
+    pub current_page: Option<u32>,
+    #[serde(rename = "totalPages")]
+    pub total_pages: Option<u32>,
+    #[serde(rename = "hasPrevious")]
+    pub has_previous: Option<bool>,
+    #[serde(rename = "hasNext")]
+    pub has_next: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Song {
     pub id: String,
     pub title: String,
-    #[serde(default)]
-    pub durationMs: Option<u64>,
-    #[serde(default)]
-    pub streamUrl: Option<String>,
+    #[serde(rename = "durationMs", default)]
+    pub duration_ms: Option<u64>,
+    #[serde(rename = "streamUrl", default)]
+    pub stream_url: Option<String>,
     #[serde(default)]
     pub artist: Option<ArtistRef>,
     #[serde(default)]
     pub album: Option<AlbumRef>,
-    #[serde(default)]
-    pub thumbnailUrl: Option<String>,
-    #[serde(default)]
-    pub imageUrl: Option<String>,
+    #[serde(rename = "thumbnailUrl", default)]
+    pub thumbnail_url: Option<String>,
+    #[serde(rename = "imageUrl", default)]
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,12 +66,13 @@ pub struct AlbumRef {
 
 #[derive(Debug, Deserialize)]
 pub struct Playlist {
-    pub apiKey: String,
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub songsCount: Option<u32>,
+    #[serde(rename = "songsCount", default)]
+    pub songs_count: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +81,6 @@ pub struct Album {
     pub name: String,
     #[serde(default)]
     pub artist: Option<ArtistRef>,
-    #[serde(default)]
-    pub songsCount: Option<u32>,
+    #[serde(rename = "songsCount", default)]
+    pub songs_count: Option<u32>,
 }

@@ -1,4 +1,5 @@
 mod scan;
+mod tags;
 
 use scan::{scan_library, LibraryIndex};
 use std::sync::{Arc, RwLock};
@@ -59,11 +60,11 @@ impl Provider for FilesystemProvider {
         paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
         let index = self.index.read().expect("index poisoned");
+        let q = query.to_ascii_lowercase();
         let mut items: Vec<Track> = index
             .tracks
             .iter()
             .filter(|t| {
-                let q = query.to_ascii_lowercase();
                 t.title.to_ascii_lowercase().contains(&q)
                     || t.artist.to_ascii_lowercase().contains(&q)
                     || t.album
@@ -73,19 +74,19 @@ impl Provider for FilesystemProvider {
             })
             .cloned()
             .collect();
-        items.sort_by(|a, b| a.title.cmp(&b.title));
+        items.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.0.cmp(&b.id.0)));
         let start = paging.offset as usize;
         let end = start.saturating_add(paging.limit as usize);
+        let next = if end < items.len() {
+            Some(PageCursor(end.to_string()))
+        } else {
+            None
+        };
         let slice = items
             .into_iter()
             .skip(start)
             .take(paging.limit as usize)
             .collect::<Vec<_>>();
-        let next = if end < index.tracks.len() {
-            Some(PageCursor(end.to_string()))
-        } else {
-            None
-        };
         Ok(Page { items: slice, next })
     }
 
@@ -129,7 +130,7 @@ impl Provider for FilesystemProvider {
             }
             BrowseKind::Albums => {
                 let mut albums: Vec<Album> = index.albums.values().cloned().collect();
-                albums.sort_by(|a, b| a.title.cmp(&b.title));
+                albums.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.0.cmp(&b.id.0)));
                 let start = paging.offset as usize;
                 let end = start.saturating_add(paging.limit as usize);
                 let slice = albums
@@ -200,18 +201,25 @@ impl Provider for FilesystemProvider {
         paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
         let index = self.index.read().expect("index poisoned");
-        let tracks = index
+        let mut tracks = index
             .tracks
             .iter()
             .filter(|t| t.album.as_ref() == Some(&album_id.0))
             .cloned()
             .collect::<Vec<_>>();
+        tracks.sort_by(|a, b| match (a.track_number, b.track_number) {
+            (Some(na), Some(nb)) => na.cmp(&nb).then_with(|| a.title.cmp(&b.title)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.title.cmp(&b.title),
+        });
         let start = paging.offset as usize;
         let end = start.saturating_add(paging.limit as usize);
         let slice = tracks
-            .into_iter()
+            .iter()
             .skip(start)
             .take(paging.limit as usize)
+            .cloned()
             .collect::<Vec<_>>();
         let next = if end < tracks.len() {
             Some(PageCursor(end.to_string()))
@@ -234,7 +242,14 @@ impl Provider for FilesystemProvider {
     }
 
     fn get_stream_url(&self, track_id: &TrackId) -> ProviderResult<StreamUrl> {
+        // Validate the file still exists before returning the URL.
         let track = self.get_track(track_id)?;
+        let path = std::path::Path::new(&track.id.0);
+        if !path.exists() {
+            return Err(ProviderError::NotFound {
+                entity: track.id.0.clone(),
+            });
+        }
         Ok(StreamUrl(format!("file://{}", track.id.0)))
     }
 }

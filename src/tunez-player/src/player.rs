@@ -142,6 +142,7 @@ mod tests {
             artist: "artist".into(),
             album: None,
             duration_seconds: None,
+            track_number: None,
         }
     }
 

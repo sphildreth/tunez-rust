@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 walkdir = "2"
 path-clean = "1"
+lofty = "0.17"
 tunez-core = { path = "../../tunez-core" }
 
 [dev-dependencies]

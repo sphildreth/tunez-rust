@@ -1,9 +1,10 @@
-use crate::models::{
-    Album, AlbumId, Page, PageCursor, PageRequest, Playlist, PlaylistId, StreamUrl, Track, TrackId,
-};
-use crate::provider::{
-    BrowseKind, CollectionItem, Provider, ProviderCapabilities, ProviderError, TrackSearchFilters,
-};
+use crate::models::{PageRequest, PlaylistId, TrackId};
+use crate::provider::{Provider, ProviderError, TrackSearchFilters};
+
+#[cfg(test)]
+use crate::models::{Album, AlbumId, Page, PageCursor, Playlist, StreamUrl, Track};
+#[cfg(test)]
+use crate::provider::{BrowseKind, CollectionItem, ProviderCapabilities};
 use thiserror::Error;
 
 /// Expectations supplied by a provider implementation to run the shared contract suite.
@@ -242,6 +243,7 @@ mod tests {
                 artist: "Artist".into(),
                 album: Some("Album".into()),
                 duration_seconds: Some(180),
+                track_number: Some(1),
             };
             let playlist = Playlist {
                 id: PlaylistId::new("pl-1"),
@@ -276,6 +278,7 @@ mod tests {
                 artist: "Artist".into(),
                 album: Some("Album".into()),
                 duration_seconds: Some(180),
+                track_number: Some(1),
             };
             Self {
                 id: "fake".into(),
@@ -431,7 +434,13 @@ mod tests {
             self.tracks
                 .iter()
                 .find(|t| &t.id == track_id)
-                .map(|_| StreamUrl::new(format!("{}{}", self.stream_prefix, track_id.0)))
+                .map(|_| {
+                    if self.stream_prefix.is_empty() {
+                        StreamUrl::new("")
+                    } else {
+                        StreamUrl::new(format!("{}{}", self.stream_prefix, track_id.0))
+                    }
+                })
                 .ok_or_else(|| ProviderError::NotFound {
                     entity: track_id.0.clone(),
                 })

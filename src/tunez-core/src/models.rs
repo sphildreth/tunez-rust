@@ -32,7 +32,7 @@ impl From<String> for TrackId {
 }
 
 /// A provider-scoped album identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct AlbumId(pub String);
 
 impl AlbumId {
@@ -85,6 +85,8 @@ pub struct Track {
     pub album: Option<String>,
     /// Duration in seconds when known.
     pub duration_seconds: Option<u32>,
+    /// Track number within album when known.
+    pub track_number: Option<u32>,
 }
 
 /// Minimal album metadata to support browse/detail views.
