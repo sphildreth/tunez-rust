@@ -81,6 +81,7 @@ tunez
 - `src/tunez-ui/` — ratatui UI shell
 - `src/tunez-player/` — queue + playback state machine
 - `src/tunez-audio/` — audio engine wiring
+- `src/tunez-plugin/` — external plugin host (Phase 2)
 - `src/providers/` — built-in providers (filesystem, melodee)
 
 ## Configuration
@@ -98,6 +99,23 @@ level = "info"        # trace|debug|info|warn|error
 max_log_files = 7     # retention; oldest files pruned
 stdout = true         # also emit logs to stdout
 ```
+
+### External Plugin Providers (Phase 2)
+
+Tunez supports external plugins via an exec-based protocol. Plugins communicate with Tunez using JSON messages over stdin/stdout.
+
+Example plugin provider configuration:
+
+```toml
+[providers.my-plugin]
+kind = "plugin"
+
+[providers.my-plugin.profiles.default]
+plugin_executable = "/usr/local/bin/my-music-plugin"
+plugin_args = ["--config", "/etc/my-plugin.toml"]
+```
+
+For plugin development documentation, see `src/tunez-plugin/src/lib.rs`.
 
 ## Repository layout
 

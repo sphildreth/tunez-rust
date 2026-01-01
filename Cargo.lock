@@ -2760,6 +2760,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tunez-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "tunez-core",
+]
+
+[[package]]
 name = "tunez-ui"
 version = "0.1.0"
 dependencies = [

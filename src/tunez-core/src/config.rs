@@ -237,6 +237,12 @@ pub struct ProviderProfile {
     pub user: Option<String>,
     #[serde(default)]
     pub library_root: Option<String>,
+    /// Path to external plugin executable (for plugin-type providers).
+    #[serde(default)]
+    pub plugin_executable: Option<String>,
+    /// Arguments to pass to the plugin executable.
+    #[serde(default)]
+    pub plugin_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
