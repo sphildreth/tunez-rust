@@ -1,37 +1,44 @@
-# Tunez TUI Player — Requirements (PRD)
+# Tunez — Requirements (PRD) — Phase 1 (Built‑in Providers)
 
 ## 1. Overview
 
-**Product name:** `tunez` (Melodee After Dark)
-**Product tagline:** “Terminal music player in full ANSI color.”
+**Product name:** `Tunez`  
+**Executable:** `tunez`  
+**Tagline:** “Terminal music player in full ANSI color.”  
 **Type:** Cross‑platform CLI + terminal UI (TUI) music player  
 **Platforms:** Linux, macOS, Windows (native terminal)  
-**Back-end:** Plugin style with sources for local music and Melodee streaming music server (HTTP API defined by the provided OpenAPI spec)
+**Extension model (Phase 1):** Modular Rust workspace with **built‑in Providers** (developer/power-user extensibility)
 
 ### 1.1 Problem statement
-You want a *fast, keyboard-first, colorful* terminal player that can browse/search your library and play audio from your streaming music server—while also being “fun”: smooth transitions, animated UI widgets, and a real-time spectrum/waveform visualization.
+Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/search a library and play music from one or more backends—while also being “fun”: smooth transitions, animated UI widgets, and a real-time spectrum/waveform visualization.
 
 ### 1.2 Why a TUI instead of a GUI?
 - Runs anywhere: SSH, tmux, headless boxes, minimal desktops
-- “Always there” experience like `ncmpcpp`, but modern/animated
+- “Always there” experience like classic terminal players, but modern/animated
 - Fun engineering challenge (audio pipeline + rendering loop + async networking)
+
+### 1.3 Phase map
+- [ ] **Phase 1** — Built-in Providers (this document)
+- [ ] **Phase 2** — External plugins (optional)
+- [ ] **Phase 3** — Fancy extras / polish (optional)
 
 ---
 
 ## 2. Goals and Non-Goals
 
-### 2.1 Goals (v1)
-1. **Play audio from the server** (streaming over HTTP) with robust buffering and minimal stutter.
+### 2.1 Goals (Phase 1)
+1. **Playback**: play audio locally (streaming and/or local files) with robust buffering and minimal stutter.
 2. **A rich TUI**: browsing, searching, queue/now-playing, progress, volume, shuffle/repeat.
 3. **Color + animation**: smooth progress bar, transitions between views, loading spinners.
 4. **Spectrum / waveform visualization** synchronized with playback (at least a spectrum analyzer).
 5. **Cross-platform**: consistent behavior on Linux/macOS/Windows terminals.
-6. **Server-first workflow**: use the Melodee API to search, fetch metadata, playlists, etc.
+6. **Modular from day 1**: clean internal boundaries so new **Providers** can be added by developers without reworking the core.
 
-### 2.2 Non-goals (v1)
-- Local library management (file tagging, local scanning)
+### 2.2 Non-goals (Phase 1)
+- Third-party “drop-in install” plugins (no plugin marketplace, no plugin folder install)
+- In-process dynamic library loading (`.dll/.so/.dylib`)
 - Multi-room audio / casting
-- Editing metadata on the server (unless already supported and easy)
+- Editing remote metadata unless trivial and safe
 - A full “Spotify client” feature set (social, collaborative playlists, etc.)
 
 ---
@@ -41,165 +48,297 @@ You want a *fast, keyboard-first, colorful* terminal player that can browse/sear
 ### 3.1 Primary user persona
 - Power user who lives in terminals (tmux, SSH)
 - Wants “no-mouse” control and a slick now-playing experience
-- Already has a music server and wants a terminal-native player
+- Uses one or more music backends (local files and/or servers)
+- Is comfortable editing config files and (optionally) building from source
 
 ### 3.2 Core user stories
-- As a user, I can **connect** to my Melodee server and stay logged in.
-- As a user, I can **search** songs and start playback immediately.
-- As a user, I can **browse** albums/artists/playlists and queue items.
-- As a user, I can **see what’s playing** and control playback with hotkeys.
-- As a user, I can **enjoy a spectrum/waveform animation** while music plays.
-- As a user, I can **resume** where I left off (queue + position, if supported) or at least restore my last view/state.
+- As a user, I can select a Provider (e.g., remote server API or local filesystem) and browse/play music from it.
+- As a user, I can search and start playback immediately.
+- As a user, I can browse artists/albums/playlists and queue items.
+- As a user, I can control playback with hotkeys and see a lively spectrum/waveform.
+- As a power user, I can add a new Provider by implementing the Provider interface in Rust and rebuilding Tunez.
 
 ---
 
 ## 4. Functional Requirements
 
-### 4.1 Connection & Authentication
-**Must**
-- Configure:
-  - Server base URL (e.g., `https://music.example.com`)
-  - Credentials (email/password) OR another supported auth flow
-- **Security Critical**: Do NOT store passwords in the config file. Use the OS keyring (Keychain, Credential Manager, Secret Service) to store the Refresh Token.
-- Authenticate and store tokens securely (platform keychain where possible).
-- Refresh tokens automatically (if refresh tokens exist) and retry requests on auth expiry.
+### 4.1 Modular Provider Architecture (Core Requirement — Phase 1)
 
-**Should**
-- Support multiple server profiles (e.g., prod/home/lab).
-- Support “device ID” / “client name” for server-side auditing.
+**Terminology (industry standard)**
+- **Core**: the `tunez` application (UI + playback engine + config + logging).
+- **Provider** (a.k.a. backend/source): a Rust component that supplies library data and streams (remote APIs or local filesystem).
+- **Capability**: an optional feature a Provider may implement (lyrics, artwork, playlists, etc.).
 
-**Nice-to-have**
-- OAuth login flows (Google) using an out-of-band/browser flow.
+**Phase 1 implementation**
+- Providers are **built-in** Rust crates/modules compiled into the Tunez binary.
+- Tunez exposes a stable internal interface (`Provider` trait) so developers can add new Providers cleanly.
+- Providers can be enabled/disabled via compile-time features and runtime configuration.
+
+#### 4.1.1 Provider interface
+Tunez MUST define a Provider abstraction that supports a common set of operations. At minimum:
+
+**MUST (Core operations exposed by Tunez)**
+- `search_tracks(query, filters, paging)`
+- `browse(kind: artists|albums|playlists|genres, paging)`
+- `list_playlists(paging)`
+- `search_playlists(query, paging)`
+- `get_album(album_id)` and `list_album_tracks(album_id)`
+- `get_track(track_id)` (metadata)
+- `get_stream_url(track_id)` -> returns a **stream URL** (Provider returns a URL only in Phase 1)
+
+For Providers that do not support a given operation, the Provider MUST return `ProviderError::NotSupported`.
+
+**SHOULD**
+- `lyrics(track_id)`
+- `artwork(entity_id)` (track/album/artist)
+- `favorites()`, `recently_played()`
+- playlist management if the backend supports it
+
+**Metadata baseline (Phase 1)**
+- Track metadata returned by Providers MUST include enough fields for the UI and scrobbling to function. At minimum: title, primary artist name, and a stable provider-scoped track id.
+- Track duration SHOULD be provided when known (seconds).
+
+**Error contract (Phase 1)**
+- Provider operations MUST return `Result<T, ProviderError>` (defined in the `tunez-core` crate) rather than ad-hoc error types.
+- `ProviderError` MUST be a stable, provider-agnostic classification so the UI and core logic can handle failures consistently.
+- At minimum, `ProviderError` MUST include categories equivalent to:
+  - `NetworkError` (connectivity / DNS / TLS / transport)
+  - `AuthenticationError` (missing/expired credentials, forbidden)
+  - `NotFound` (missing track/album/playlist IDs)
+  - `NotSupported` (operation/capability not implemented by Provider or not available for the current account/server)
+  - `Other` (fallback with message/context)
+
+**Paging and ordering (Phase 1)**
+- All list/search operations that accept `paging` MUST behave deterministically for a given query while paging (stable ordering within a single logical query).
+- Providers MAY impose a maximum page size; if the caller requests more, the Provider MUST either clamp to its maximum and continue paging correctly, or return a clear error.
+- Provider responses SHOULD include enough paging metadata to continue (cursor/token or offset/limit).
+
+#### 4.1.2 Capability model
+- The Provider capability model MUST include a flag for **offline downloading support** (e.g., `supports_offline_download: bool`).
+- If `supports_offline_download` is false (e.g., the Melodee API Provider), Tunez MUST hide/disable any offline download UI/actions for that Provider.
+
+- The Core MUST be able to query whether a Provider supports optional capabilities.
+- UI MUST degrade gracefully (hide tabs/actions) when a capability is absent.
+
+**Capability discovery semantics (Phase 1)**
+- Capability flags MUST represent the Provider’s best-known support level at startup/config time.
+- If a capability cannot be known up-front (e.g., depends on server version or account permissions), the Provider MAY advertise it optimistically and return `ProviderError::NotSupported` for specific calls.
+- When a call returns `NotSupported`, Tunez SHOULD treat it as a non-fatal signal to hide/disable the related UI action for the remainder of the session (or until provider/profile changes).
+
+#### 4.1.3 Provider selection and profiles
+**MUST**
+- User can pick a Provider by config (`default_provider`) and/or CLI (`--provider <id>`).
+- Support per-provider configuration blocks (e.g., server URL, local library root).
+- The primary configuration file format MUST be **TOML** (Rust CLI standard), loaded from the OS-appropriate config directory (via `directories`).
+
+**SHOULD**
+- Support multiple profiles (e.g., `home`, `lab`) and provider-specific profiles.
+
+#### 4.1.4 Developer extensibility (Phase 1)
+**MUST**
+- Document the Provider interface and provide a template Provider (skeleton).
+- Provide at least one “reference Provider” implementation (remote API) and one “local Provider” (filesystem).
+
+**SHOULD**
+- Use Cargo features to include/exclude providers:
+  - e.g., `--features provider-filesystem,provider-melodee`
+- Maintain a `providers/` workspace folder with a consistent structure and tests.
+
+**NICE-TO-HAVE**
+- A `tunez dev provider new <name>` generator (v2).
 
 ---
 
-### 4.2 Library Search and Discovery
-**Must**
-- Search songs by text query.
+### 4.2 Connection & Authentication (Provider-dependent)
+**MUST**
+- Provider configuration supports server base URL and identity (username/email) where applicable.
+- **Security Critical**: do NOT store passwords in config.
+- Tokens/refresh tokens MUST be stored in the OS keyring (Keychain / Credential Manager / Secret Service).
+- Providers MUST handle token expiry/refresh gracefully (refresh when possible; otherwise return `ProviderError::AuthenticationError` and guide the user to re-auth).
+
+**SHOULD**
+- Login UX:
+  - `tunez auth login --provider <id> --profile <name>`
+  - `tunez auth status`
+  - `tunez auth logout`
+
+---
+
+### 4.3 Library Search and Discovery
+**MUST**
+- Search tracks by text query.
 - Show paged results and allow keyboard navigation.
 
-**Should**
-- Advanced search filters (artist/album/year/genre) if supported by API.
-- Search albums/artists/playlists too.
-
-**Nice-to-have**
-- Recommendations / charts views.
+**SHOULD**
+- Filtered search (artist/album/year/genre) where supported by Provider.
+- Search for albums/artists/playlists too.
 
 ---
 
-### 4.3 Browsing Views
-**Must**
+### 4.4 Browsing Views
+**MUST**
 - Views (tabs) for:
   - **Now Playing**
   - **Queue**
   - **Search**
-  - **Playlists**
-- Detail panels for current selection (duration, artist, album, etc.).
+  - **Library** (provider-driven browse)
+- Detail panels for current selection (duration, artist, album, etc.)
 
-**Should**
-- Views for:
-  - Albums
-  - Artists
-  - Liked/Top-rated/Recently played (if supported)
+**SHOULD**
+- Provider-specific views (e.g., “Favorites”, “Recent”) when capabilities exist.
 
 ---
 
-### 4.4 Playback
-**Must**
-- Stream audio via HTTP and play on the local audio device.
-- Playback controls:
+### 4.5 Playback
+**MUST**
+- Play audio on the local audio device.
+- Controls:
   - Play/Pause
   - Next/Previous
   - Seek ±5s/±30s
   - Volume up/down + mute
-- Progress display:
-  - elapsed / remaining
-  - buffered indicator (optional, but recommended)
+- Progress display: elapsed/remaining (+ buffered indicator recommended)
 
-**Should**
+**SHOULD**
 - Gapless-ish playback (best-effort) by pre-buffering the next track.
-- Multiple output device selection (where feasible).
+- Output device selection (where feasible).
 
-**Nice-to-have**
-- ReplayGain / loudness normalization (if metadata is available).
-- Equalizer presets (if client-side EQ is implemented).
-- OS-level media controls (MPRIS on Linux, SMTC on Windows) so media keys work when the terminal is unfocused.
+**NICE-TO-HAVE**
+- OS-level media controls (MPRIS on Linux, SMTC on Windows).
 
 ---
 
-### 4.5 Queue Management
-**Must**
-- A local playback queue inside the client:
+### 4.6 Queue Management
+**MUST**
+- Local playback queue:
   - Add track(s) to end / play next
   - Remove item(s)
   - Clear queue
   - Shuffle queue
-- Queue persists in local app state between runs (optional for v1, but helpful).
 
-**Should**
-- If the server supports queue endpoints: sync queue state (server ↔ client).
-- Support “radio mode” (auto-append recommendations based on current song).
-
----
-
-### 4.6 Playlists
-**Must**
-- List user playlists.
-- Open a playlist, list its songs, and play/queue them.
-
-**Should**
-- Create / rename / delete playlists (if supported).
-- Add/remove songs.
-- Reorder playlist.
+**SHOULD**
+- Persist queue locally between runs.
+- Queue persistence SHOULD be resilient: if the persisted queue/state is corrupt or unreadable, Tunez SHOULD start with an empty queue, show a non-fatal warning, and keep the corrupt file for debugging.
+- Tunez SHOULD keep a last-known-good backup of the queue state (best-effort) to support recovery.
 
 ---
 
-### 4.7 Lyrics
-**Should**
-- Fetch and display lyrics for the current song when available.
-- Provide scrolling and “follow along” display (nice-to-have).
+### 4.7 Playlists
+**MUST (MVP)**
+- Provider MUST be able to **list playlists** and **search playlists** (when the backend supports playlists).
+- Open a playlist, list tracks, and play/queue them.
+
+**V2 (Not Phase 1)**
+- Create/rename/delete playlists and playlist reordering.
 
 ---
 
-### 4.8 Scrobbling / Play Events
-**Should**
-- Notify server when:
-  - playback starts
-  - playback ends
-  - position checkpoints (e.g., every 30s or 50% progress)
-- Handle offline/temporary server disconnect by batching play events.
+### 4.8 Lyrics
+**SHOULD**
+- Fetch and display lyrics when available.
+- Provide scrolling; “follow along” optional.
 
 ---
 
 ### 4.9 Errors, Offline, and Resilience
-**Must**
+**MUST**
 - Graceful error states in the UI (banner/toast).
-- Network timeouts and retries with exponential backoff.
+- Timeouts and retries with exponential backoff.
 - If stream fails mid-track, allow retry or skip.
+- **Unknown/invalid track metadata** (e.g., unreadable file/unsupported codec/missing duration): Tunez MUST log the error, show a user-visible message, and skip the track.
+- Provider failures MUST be surfaced through `ProviderError` categories (e.g., network vs auth vs not found) so the UI can present consistent, actionable states across Providers.
 
-**Should**
-- Cache metadata (songs/albums/playlists) to speed up navigation.
+**User experience during common failures (Phase 1)**
+- Network failures (`ProviderError::NetworkError`) MUST be shown as non-blocking UI state (banner/toast) that includes: the affected Provider, whether an automatic retry will occur, and an actionable next step (retry, switch provider, check network).
+- Authentication failures (`ProviderError::AuthenticationError`) MUST prompt the user toward the supported login/logout flow for the current provider/profile (without exposing secrets), and MUST keep the UI responsive (browsing may be disabled for that Provider until re-auth).
+- Audio device failures (device lost/unavailable/permission denied) MUST present a clear UI message and MUST not crash; Tunez SHOULD attempt to recover automatically where feasible (e.g., re-open default device) and otherwise allow the user to pause/stop playback.
+
+Where feasible, these error surfaces SHOULD include keyboard-first actions (e.g., Retry, Login, View details/logs) consistent with the toast/modal patterns referenced in the TUI mockups.
+
+**SHOULD**
+- Cache metadata to speed up navigation.
 - “Offline mode” for browsing cached metadata (not necessarily playing).
 
 ---
 
+### 4.10 Scrobbling / Play Reporting (MVP)
+Tunez MUST support scrobbling / play-event reporting via a modular component:
+
+- **Scrobbler**: a Rust component responsible for reporting playback events to a backend service.
+- Scrobblers MUST be pluggable at build-time (built-in crates), similar to Providers.
+
+#### 4.10.1 Scrobbler-driven reporting model (Phase 1)
+To support different backends with different reporting rules, Tunez SHOULD NOT hard-code scrobbling thresholds (e.g., “10 seconds” or “50%”). Instead:
+
+**MUST**
+- Tunez MUST provide the Scrobbler with:
+  - Track identity (provider id + track id) and metadata needed for reporting
+  - **Track duration** (seconds) when known
+  - **Playback position / played duration** (seconds), updated periodically
+  - Playback state transitions (started/resumed/paused/stopped/ended)
+  - A stable `player_name` identifier (e.g., `Tunez`) and an optional `device_id`
+- The Scrobbler MUST decide:
+  - when to emit “Now Playing”-style events
+  - when to emit “Played/submission”-style events
+  - any periodic progress updates, if desired
+
+**SHOULD**
+- Tunez SHOULD call a Scrobbler tick/update hook at a reasonable cadence while playing (default: **once per second**), but the Scrobbler decides what to do with it.
+- Tunez SHOULD reuse the same 1-second tick event used for progress/elapsed-time UI updates to drive Scrobbler telemetry, to avoid redundant timers.
+
+#### 4.10.2 Failure handling
+**MUST**
+- If scrobbling is not configured or not supported, Tunez MUST continue functioning normally.
+- If a Scrobbler returns an error, Tunez MUST log it and show a non-blocking UI indicator; playback must not be interrupted.
+
+**SHOULD**
+- Batch and retry scrobble events on transient network failures.
+- Provide a UI indicator (“Scrobbling: on/off/error”).
+
+#### 4.10.3 Scrobbling configuration and persistence (Phase 1)
+**MUST**
+- Scrobbling MUST be configurable per provider/profile (enable/disable).
+- Tunez MUST persist pending scrobble events to local storage so they can be retried after restarts and while offline.
+- The persistence queue MUST be bounded (by count and/or age) to avoid unbounded growth.
+
+**SHOULD**
+- Pending events SHOULD be retried with backoff and jitter and pruned once acknowledged.
+- The UI indicator SHOULD reflect when events are queued for retry vs successfully sent.
+- Config UI SHOULD allow the user to view basic scrobbling status (on/off/error) and purge pending queued events.
+
+
 ## 5. TUI/UX Requirements
 
+### 5.0 TUI mockups (reference)
+The initial UI layout and screen breakdown are captured as ASCII mockups in [docs/tunez-tui-mockups.md](docs/tunez-tui-mockups.md). This document SHOULD be treated as the canonical reference for:
+- Global frame regions: **Top Status Bar**, **Left Nav**, **Main Pane**, **Bottom Player Bar**
+- Information density and keyboard-first affordances (hints, in-pane actions)
+- Error presentation patterns (toast/banner vs modal)
+
+Tunez SHOULD provide the following screens/views (as shown in the mockups), subject to Provider capabilities:
+- Splash / Loading
+- Now Playing
+- Search
+- Library (Browse)
+- Playlists
+- Queue
+- Lyrics
+- Config (including Provider/Profile, Cache/Offline, Scrobbling sections)
+- Help / keybindings overlay
+
 ### 5.1 Visual layout
-**Baseline layout**
-- Top bar: connection status, server profile, search box (contextual)
-- Left sidebar: tabs / navigation
-- Main pane: lists (songs/albums/playlists) or lyrics/details
-- Bottom player bar:
-  - track info
-  - progress + time
-  - transport icons (ASCII/Unicode)
-  - volume
-  - status indicators (shuffle/repeat)
+- Top bar: provider/profile, connection status, contextual search
+- Left sidebar: tabs + provider selector
+- Main pane: lists (tracks/albums/playlists) or lyrics/details
+- Bottom player bar: track info, progress/time, volume, shuffle/repeat indicators
+
+**Terminal sizing**
+- Tunez MUST render a usable UI at 80x24.
+- If the terminal is smaller than the minimum, Tunez MUST degrade gracefully (e.g., hide non-essential panels like the visualizer/sidebar) and/or show a clear message indicating the minimum recommended size.
 
 ### 5.2 Input model
-**Must**
-- Keyboard-first navigation with vim-ish defaults (customizable):
+**MUST**
+- Keyboard-first navigation (vim-ish defaults; rebindable):
   - `j/k` navigate
   - `Enter` open/play
   - `Space` play/pause
@@ -207,300 +346,338 @@ You want a *fast, keyboard-first, colorful* terminal player that can browse/sear
   - `/` search
   - `q` back/close
   - `?` help overlay
-- Fully rebindable keys via config file.
-
-**Should**
-- Mouse support (scroll, click) if feasible.
 
 ### 5.3 Color + themes
-**Must**
-- 24-bit color support when terminal supports it.
-- A default theme with high contrast and tasteful accent colors.
+**MUST**
+- 24-bit color support where terminal supports it
+- sensible default theme
 
-**Should**
-- Theme packs (TOML/YAML) and runtime switching.
+**SHOULD**
+- Theme packs and runtime switching
 
 ### 5.4 Animations
-**Must**
-- Smooth progress bar (updates at ~20–60 FPS depending on terminal).
-- Animated loading states (spinners).
-- Spectrum analyzer animation while audio plays.
-
-**Should**
-- View transitions (subtle fades/slide effects via redraw patterns).
-- Beat-synced “pulse” on now-playing elements (optional).
+**MUST**
+- Smooth progress bar updates (adaptive FPS)
+- Loading spinners
+- Spectrum analyzer animation while audio plays
 
 ### 5.5 Accessibility
-**Must**
-- Work in monochrome terminals (fallback colors).
-- No reliance on emoji for core meaning.
+**MUST**
+- Monochrome fallback
+- No emoji required for meaning
+
+**SHOULD**
+- Maintain full keyboard operability for all core actions (no mouse required), and keep keybindings rebindable.
+- Avoid meaning conveyed by color alone; important states (error/offline/scrobble status) SHOULD also have text labels or icons with monochrome equivalents.
+- Prefer high-contrast theme defaults and ensure key UI elements (selection highlight, progress, warnings) remain distinguishable in common terminal color schemes.
+- Strive for screen-reader-friendliness within terminal constraints by keeping status text concise, avoiding rapidly changing full-screen redraws for purely decorative elements, and providing non-animated text alternatives where practical.
 
 ---
 
 ## 6. Non-Functional Requirements
 
 ### 6.1 Performance
-- Startup time: < 1s to show UI (assuming config exists).
-- UI should remain responsive while streaming/decoding.
-- CPU target: “reasonable” on low-power machines; visualization should degrade gracefully.
+- Startup: < 1s to show UI
+- UI remains responsive while streaming/decoding
+- Visualization degrades gracefully on slow terminals
 
 ### 6.2 Reliability
-- Avoid crashes on malformed metadata.
-- Robust handling of audio device changes/unavailable device.
+- No panics on normal usage
+- Handle audio device changes gracefully
 
 ### 6.3 Security
-- TLS by default (https).
-- Tokens stored securely:
-  - Keychain on macOS, Credential Manager on Windows, Secret Service/libsecret on Linux when available.
-  - File fallback only if explicitly allowed.
+- TLS by default where applicable
+- Secrets in OS keyring; file fallback only if explicitly allowed
+
+### 6.5 Privacy
+**MUST**
+- Scrobbling and any external telemetry MUST be opt-in per provider/profile (disabled unless explicitly enabled/configured).
+- Tunez MUST minimize data: only send the fields required by the selected Scrobbler backend (e.g., track identity, timestamps, durations/played duration).
+- Tunez MUST provide an opt-out mechanism by allowing the user to disable scrobbling per provider/profile and MUST stop sending new events immediately.
+- Locally persisted scrobble retry queues and logs MUST be bounded (by age and/or size) and MUST NOT store passwords.
+
+**SHOULD**
+- Provide a way to purge local scrobble queues (and other cached telemetry/state) without uninstalling Tunez.
+- Avoid including full URLs with tokens or personally identifying info in logs; redact sensitive values where feasible.
 
 ### 6.4 Portability / distribution
-- `cargo install mad`
-- Prebuilt binaries for the 3 platforms (GitHub Releases). Binary name: `mad` (Linux/macOS), `mad.exe` (Windows).
-- Minimal external dependencies (avoid requiring ffmpeg if possible)
+- `cargo install tunez`
+- Prebuilt binaries for Linux/macOS/Windows (GitHub Releases)
 
 ---
 
 ## 7. Technical Approach (Rust Stack)
 
 ### 7.1 TUI stack
-- **ratatui** (modern tui crate) + **crossterm** (cross-platform terminal IO)
-- A central `AppState` + message/event bus model
+- **ratatui** + **crossterm**
+- Central `AppState` + message/event bus model
 
 ### 7.2 Async + HTTP
-- **tokio** runtime
-- **reqwest** + **serde** for API calls and models
-- Resilience: `tower` retry policies (optional) or custom backoff
+- **tokio**
+- **reqwest** + **serde**
 
 ### 7.3 Audio playback pipeline
-Recommended path (pure Rust):
-- **symphonia** for decoding common formats (MP3, FLAC, AAC, etc.)
-- **cpal** for cross-platform audio output. *Critical Note:* Ensure visualization data is synchronized with the playback cursor, not the decoding cursor, to prevent visuals appearing "ahead" of the audio.
-- Alternative: **rodio** (higher-level wrapper) if it exposes enough hook points for visualization, which simplifies device management significantly.
+- **symphonia** (decode)
+- **cpal** (output)
+- Optional: **rodio** (if it supports needed hooks)
 
-### 7.4 Spectrum / waveform visualization
-- Capture decoded PCM frames before they are written to the audio device.
-- Use a ring buffer (lock-free) to share samples with the UI thread/task.
-- FFT via **rustfft** (or a small DFT for low-res “bars” mode).
-- Visual modes:
-  - Spectrum bars
-  - Oscilloscope line
-  - “VU meter” fallback for slow terminals
+#### 7.3.1 Audio format support (Phase 1)
+**MUST**
+- Tunez MUST support decoding and playback for: MP3, AAC/MP4 (M4A), FLAC, and WAV.
+
+**SHOULD**
+- Support Ogg Vorbis and Opus.
+- Handle both local files (filesystem provider) and HTTP streams (remote providers) for supported formats.
+
+### 7.4 Visualization
+- Tap decoded PCM frames before output
+- Ring buffer between audio task and UI task
+- FFT via **rustfft**
+- Modes: spectrum bars, oscilloscope, VU fallback
 
 ### 7.5 CLI + configuration
-- **clap** for CLI flags/subcommands
-- **directories** crate to resolve standard paths (XDG on Linux, AppData on Windows, Library on macOS). Do not hardcode `~/.config`.
-- `tracing` + `tracing-subscriber` for structured logs
+- **clap** for CLI
+- **directories** for config/data paths
+- **toml** (+ **serde**) for TOML configuration files
+- `tracing` for logs
+
+#### 7.5.1 Configuration management (Phase 1)
+**MUST**
+- Tunez MUST validate configuration on startup and on `tunez config edit` save/apply.
+- Validation failures MUST be surfaced as actionable messages (which key/value is invalid and what is expected) and MUST not expose secrets.
+- Tunez MUST use secure defaults: do not enable scrobbling/telemetry unless explicitly configured; do not write secrets to config files.
+
+**SHOULD**
+- Support config schema evolution via an explicit `config_version` field and a documented migration strategy.
+- When migrating config formats/fields, Tunez SHOULD back up the prior config before writing an updated version.
+- Unknown config keys SHOULD be preserved when rewriting config (best-effort) and/or warned about rather than silently dropped.
+- Document the configuration schema with at least one example `config.toml` layout.
 
 ---
 
 ## 8. High-Level Architecture
 
-### 8.1 Core modules
-- `api/` — typed API client, auth refresh, paging helpers
-- `player/` — playback engine (state machine), queue, transport controls
-- `audio/` — stream reader, decoder, output, buffer management
-- `viz/` — spectrum/waveform computation
-- `ui/` — ratatui views, layout, theming, input bindings
-- `storage/` — config, secure token store, cache
+### 8.1 Workspace layout (recommended)
+- `tunez-core/` — domain types, Provider traits, errors
+- `tunez-ui/` — ratatui UI, themes, keybindings
+- `tunez-player/` — queue + playback state machine
+- `tunez-audio/` — stream reader, decoder, output, buffering
+- `tunez-viz/` — spectrum/waveform computation
+- `tunez-cli/` — CLI parsing and command dispatch
+- `providers/` — built-in Provider crates (Phase 1)
+  - `provider-remote-example/` (e.g., a server API provider)
+  - `provider-filesystem/`
+  - future: `provider-jellyfin/`, `provider-subsonic/`
 
-### 8.2 Data flow (playback)
-1. User selects a song → app resolves a **stream URL**
-2. `audio::stream_reader` pulls bytes over HTTP
-3. `audio::decoder` converts into PCM frames
+### 8.2 Data flow (provider)
+1. UI issues intent (search/browse)
+2. Selected Provider executes request (local and/or network)
+3. UI updates incrementally (no UI thread blocking)
+
+### 8.3 Data flow (playback)
+1. Provider returns a stream URL/handle for a track
+2. `audio::stream_reader` pulls bytes
+3. `audio::decoder` converts to PCM frames
 4. `audio::output` writes to device
-5. `viz` receives a copy of PCM frames and computes FFT buckets
-6. `ui` renders current state at a configured refresh rate
+5. `viz` computes FFT buckets from PCM frames
+6. `ui` renders current state at adaptive FPS
 
 ---
 
-## 9. Definition of Done (v1)
+## 9. Command Line Interface (CLI) Requirements
 
-### 9.1 MVP acceptance criteria
-- Login + persistent session
-- Search songs, pick one, it plays
+### 9.1 Core commands
+**MUST**
+- `tunez` (launch TUI)
+- `tunez play [selectors]` (resolve + launch TUI + autoplay)
+- `tunez providers list`
+
+**SHOULD**
+- `tunez config edit` (open in $EDITOR)
+- `tunez auth login|status|logout` (provider-specific)
+
+### 9.2 Selector options for `play`
+**MUST**
+- `--provider <id>`
+- `--artist <name>`
+- `--album <name>`
+- `--track <name>`
+- `--playlist <name>`
+- `--id <provider-specific-id>`
+- `-p, --autoplay`
+
+**Selector behavior**
+- If multiple selectors are provided, Tunez MUST either treat them as compatible filters (e.g., `--artist` + `--album`) or fail fast with a clear error describing the unsupported combination.
+- `--id` MUST take precedence over other selectors.
+
+---
+
+## 10. Definition of Done (Phase 1)
+
+### 10.1 MVP acceptance criteria
+- Provider selection works (config + CLI)
+- At least 2 built-in Providers:
+  - remote API provider (example)
+  - local filesystem provider
+- Search tracks, pick one, it plays
+- Scrobbling works (at least one built-in reference Scrobbler enabled and sending play events to a real backend; e.g., ListenBrainz or Last.fm)
+- Playlists: list and search playlists (where supported by Provider)
 - Queue view works (add/remove/reorder locally)
-- Basic player controls + progress/volume
-- A working spectrum visualization (even low-res bars)
-- Works on:
-  - Linux (Alacritty, GNOME Terminal)
-  - macOS (Terminal / iTerm2)
-  - Windows (Windows Terminal)
+- Basic controls + progress/volume
+- Working spectrum visualization (low-res bars is fine)
+- Works on Linux/macOS/Windows terminals
 
-### 9.2 Quality gates
+### 10.2 Quality gates
 - `cargo fmt`, `cargo clippy -D warnings`, `cargo test`
-- Minimal crash rate: no panics on normal usage
+- No panics on normal usage
 - Audio does not stutter on normal network conditions (best effort)
 
+### 10.3 Testing strategy (Phase 1)
+Tunez MUST include automated tests at multiple layers to protect core behavior (queue, playback state, provider/scrobbler integration) while keeping tests fast, deterministic, and cross-platform.
+
+**Goals**
+- Catch regressions in **queue management**, **playback state**, **provider behavior**, and **scrobbling telemetry**.
+- Keep the majority of tests **fast and deterministic** (no real network, no real audio device required).
+- Make it easy for new Providers/Scrobblers to adopt a **shared contract test suite**.
+
+#### 10.3.1 Unit tests (core logic)
+**MUST**
+- Use Rust’s built-in test harness (`#[test]`) for pure logic:
+  - Queue operations: add/remove/reorder/clear/shuffle
+  - Playback state machine: Stopped/Playing/Paused/Buffering/Error transitions
+  - CLI intent parsing/matching logic (e.g., `--artist/--album/--track`)
+  - Config parsing/defaults/migrations
+  - Capability gating (UI actions enabled/disabled based on provider capabilities)
+- Avoid real I/O (network, filesystem, audio device) in unit tests.
+
+**SHOULD**
+- Provide fixtures/builders for creating tracks, albums, playlists, and playback timelines.
+
+#### 10.3.2 Property-based tests (invariants)
+**SHOULD**
+- Use property-based testing for invariants that are hard to exhaust manually (e.g., `proptest`):
+  - Queue membership is preserved under shuffle
+  - Reorder operations keep indices valid and preserve all items
+  - Removing items reduces size exactly and never panics
+  - Playback progress is monotonic (never decreases) given valid input sequences
+
+#### 10.3.3 Integration tests (CLI + app wiring)
+**MUST**
+- Add `tests/` integration tests to validate:
+  - `tunez play ...` builds the expected playback intent
+  - Provider/profile selection works from CLI and config
+  - Error handling (invalid track / stream failure) results in log + user message + skip behavior
+- Integration tests MUST run without a real backend by using mocks/stubs.
+
+**SHOULD**
+- Use `assert_cmd` to run the binary and verify output/exit codes.
+- Use `predicates` for clean output assertions.
+
+#### 10.3.4 Provider contract tests (shared suite)
+Tunez MUST provide a reusable contract test suite so each built-in Provider can be validated consistently.
+
+**MUST**
+- Implement a `ProviderTestSuite` in a shared crate (e.g., `tunez-testkit` or `tunez-core`).
+- Each Provider crate MUST run the suite against its implementation.
+- Minimum Provider contract (MVP):
+  - `search_tracks(...)` returns stable IDs for selection
+  - `get_stream_url(track_id)` returns a usable URL string
+  - Playlist support (when provider capability indicates it):
+    - `list_playlists(...)` and `search_playlists(...)` behave consistently
+
+**SHOULD**
+- Include tests verifying capability flags match behavior (e.g., if playlists unsupported, methods return `NotSupported`).
+
+#### 10.3.5 Scrobbler contract tests (telemetry + emissions)
+Tunez MUST test scrobbling as a modular component.
+
+**MUST**
+- Provide a `ScrobblerTestSuite` that feeds playback telemetry (track, duration, played duration, state transitions) and asserts emitted “requests/events” via a mock transport.
+- The built-in reference Scrobbler(s) MUST be covered by tests validating:
+  - Correct event shape (Now Playing / Played or equivalent)
+  - Retry/batch behavior on transient failures
+  - Errors do not interrupt playback (logged + UI indicator only)
+
+**SHOULD**
+- Use a local mock HTTP server (e.g., `wiremock`) rather than real network calls.
+
+#### 10.3.6 UI testing (state-to-view)
+Because Tunez is a TUI, most UI behavior SHOULD be tested as state transformations and view-model outcomes rather than pixel-perfect frame comparisons.
+
+**SHOULD**
+- Structure UI so that key handlers map `Input -> Action -> State change`.
+- Test:
+  - Keybinding mappings
+  - View selection logic (tabs)
+  - Enable/disable behavior based on capabilities (e.g., offline download actions hidden)
+
+**NICE-TO-HAVE**
+- Add snapshot/frame tests using a test backend if the TUI framework supports it, but do not rely on these as the primary testing method.
+
+#### Tooling & quality gates
+**MUST**
+- CI runs:
+  - `cargo fmt --check`
+  - `cargo clippy -- -D warnings`
+  - `cargo test`
+- Tests MUST pass on Linux/macOS/Windows CI runners.
+
+**SHOULD**
+- Use `cargo nextest` for faster/more readable test output (optional).
+- Maintain code coverage reporting (tooling choice left to implementation).
+
 ---
 
-## 10. Roadmap
+## 11. Roadmap (post-Phase 1, optional)
 
-### Phase 0 — Skeleton
-- Project scaffolding, UI shell, config, logging
-- API client basic request/response types
+### Phase 2 — External plugins (optional)
+- Add a plugin host (exec-based or dylib-based) that *adapts* plugins to the same Provider interface.
+- Keep Phase 1 providers working unchanged.
 
-### Phase 1 — Playback MVP
-- Auth + search + play
-- Queue + now playing + basic controls
-- Minimal spectrum bars
-
-### Phase 2 — Library power features
-- Playlists (list/open/queue)
-- Lyrics view
-- Better caching and paging UX
-
-### Phase 3 — “Fun club”
-- Better visualization modes + theme editor
-- Animations/transitions
-- Scrobbling and robust play-event sync
+### Phase 3 — Fancy extras
+- More visualization modes + theme editor
+- Scrobbling/play events where supported
+- Better caching and offline modes
 
 ---
 
-## 11. Risks and Mitigations
+## 12. Decisions (Phase 1)
 
-- **Cross-platform audio quirks:** keep audio backend modular; add device selection and fallback.
-- **Terminal performance:** use adaptive FPS; degrade visualization resolution under load.
-- **Network jitter:** implement buffering and a “reconnect and resume” strategy where feasible.
-- **Auth uncertainty:** support multiple auth strategies and token refresh.
+### 12.1 Provider streaming contract
+- Providers return **stream URLs only** (no provider-proxied streaming in Phase 1).
+
+### 12.2 Offline download support
+- Providers expose a capability flag: `supports_offline_download: bool`.
+- Tunez treats offline downloading as a **Provider/user concern** (rights/DRM/etc. are not Tunez’s responsibility).
+- If a Provider sets `supports_offline_download = true`, Tunez MAY expose offline features for that Provider.
+- Offline download behavior is configured by the user:
+  - **Download location** is a configuration option.
+  - **Cache eviction policy** is a configuration option (size/age/TTL, etc.).
+- If `supports_offline_download = false` (e.g., Melodee API Provider), Tunez MUST hide/disable offline UI/actions.
+
+**Offline download UX/flow (Phase 1)**
+- When the user initiates an offline download, Tunez MUST show an in-UI confirmation/prompt if the action is potentially large (e.g., playlist/album download), and MUST provide a clear way to cancel.
+- Tunez MUST present download state feedback (queued/downloading/succeeded/failed) without blocking playback.
+- Download failures MUST be non-fatal and surfaced as a clear UI message; Tunez SHOULD allow retry.
+
+**Cache eviction configuration and enforcement (Phase 1)**
+- Eviction policy MUST be configurable in TOML and enforced by Tunez (best-effort) at minimum on startup and after new downloads.
+- Eviction MUST only delete files Tunez created/owns in its managed download/cache directory; it MUST NOT delete unrelated user files.
+- Eviction SHOULD use a predictable strategy (e.g., LRU by access time or oldest-first) and SHOULD log what was removed.
+
+### 12.3 Minimum Provider MVP capability
+- A Provider is considered “MVP-capable” if Tunez can:
+  1) **search tracks**, and
+  2) obtain a **track stream URL** for playback.
+
+For all other operations, an MVP-capable Provider MAY return `ProviderError::NotSupported`.
+
+### 12.4 Scrobbling semantics (MVP)
+- Tunez does **not** hard-code scrobbling thresholds in Phase 1.
+- Each Scrobbler implementation defines its own reporting rules (e.g., “Now Playing”, “Played/submission”, periodic updates) based on the playback telemetry Tunez provides (track, duration, played duration, state transitions).
 
 ---
 
-## 12. Open Questions
-1. Preferred login method(s) for the client (password vs token vs external OAuth)?
-2. Does the server offer “remote queue sync” endpoints you want to use, or is local-only OK?
-3. Should the client support downloading/caching tracks for offline playback?
-4. What’s the minimum visualization fidelity you want (bars vs waveform vs both)?
-
----
-
-## 13. Implementation Details for Coding Agents
-
-### 13.1 API Integration Examples
-Assuming the Melodee API follows a standard RESTful design with the provided OpenAPI spec, key endpoints to implement include:
-
-- **Authentication**: `POST /auth/login` with JSON body `{"email": "user@example.com", "password": "pass"}` returning `{"token": "jwt_token", "refresh_token": "refresh_jwt"}`.
-- **Search**: `GET /search?q={query}&type=song&limit=50&offset=0` returning paginated results. *Implementation Note:* If implementing "search-as-you-type", enforce a debounce (e.g., 300ms) and cancel stale requests to avoid UI lag and API spam.
-- **Playlists**: `GET /playlists` for list, `GET /playlists/{id}/tracks` for contents.
-- **Stream**: Direct HTTP GET to `stream_url` for audio data (e.g., MP3/FLAC), with Range headers for seeking.
-
-Use `reqwest` with `serde` for deserialization. Implement token refresh by checking response status 401 and retrying with refreshed token.
-
-### 13.2 Configuration Strategy
-
-**File Location**:
-Use the `directories` crate to resolve the platform-standard configuration directory (e.g., `~/.config/mad/config.toml` on Linux, `%APPDATA%\mad\config.toml` on Windows, `~/Library/Application Support/mad/config.toml` on macOS).
-*Note: The application binary name is `mad` (or `mad.exe` on Windows), so configuration folders should default to `mad`.*
-
-**Precedence Order (Highest to Lowest)**:
-1.  **CLI Arguments** (e.g., `mad --server https://music.local`)
-2.  **Environment Variables** (e.g., `MELODEE_SERVER_URL`, `MELODEE_EMAIL`)
-3.  **Config File** (`config.toml`)
-4.  **Hardcoded Defaults**
-
-**Example `config.toml`**:
-```toml
-[server]
-base_url = "https://music.example.com"
-profile = "prod"
-
-[auth]
-email = "user@example.com"
-# Note: Passwords/Tokens are NOT stored here. Use OS Keyring.
-
-[ui]
-theme = "default"
-fps = 30
-keybindings = { play_pause = "Space", next = "n", prev = "p" }
-
-[audio]
-buffer_size_ms = 2000
-device = "default"
-```
-
-Load using the `config` crate, which supports layering these sources automatically.
-
-### 13.3 Audio Pipeline Pseudocode
-Core playback loop using `tokio`:
-
-```rust
-async fn playback_loop(app_state: Arc<Mutex<AppState>>) {
-    loop {
-        let current_track = app_state.lock().await.queue.current();
-        if let Some(track) = current_track {
-            let stream = reqwest::get(&track.stream_url).await?;
-            let decoder = symphonia::default::get_probe().format(
-                &Default::default(),
-                symphonia::core::io::MediaSourceStream::new(Box::new(stream), Default::default()),
-                &Default::default(),
-                &Default::default(),
-            )?;
-            
-            let mut output = cpal::default_host().default_output_device().build_output_stream(
-                &cpal::StreamConfig::default(),
-                move |data: &mut [f32], _| {
-                    // Decode and fill buffer
-                    // Also feed viz_ring_buffer for visualization
-                },
-                |err| eprintln!("Audio error: {:?}", err),
-            )?;
-            
-            output.play()?;
-            // Handle controls, seeking, etc.
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-```
-
-### 13.4 Visualization Implementation
-For spectrum: Use `rustfft` on PCM samples from a ring buffer. Compute FFT every frame, map frequencies to bars (e.g., 32 bins). Render with ratatui blocks.
-
-```rust
-fn compute_spectrum(samples: &[f32]) -> Vec<f32> {
-    let mut planner = rustfft::FftPlanner::new();
-    let fft = planner.plan_fft_forward(samples.len());
-    let mut buffer: Vec<Complex<f32>> = samples.iter().map(|&s| Complex::new(s, 0.0)).collect();
-    fft.process(&mut buffer);
-    buffer.iter().take(samples.len() / 2).map(|c| c.norm()).collect()
-}
-```
-
-### 13.5 Error Handling and Resilience
-- Network errors: Use `tower::retry` with exponential backoff (initial 1s, max 30s).
-- Audio failures: Log and skip to next track; show toast notification in UI.
-- Auth expiry: Intercept 401, refresh token, retry request.
-- Offline: Cache metadata with `sled` or `rusqlite`; show cached views with "offline" indicator.
-
-### 13.6 Testing Strategy
-- Unit tests: Mock API responses with `mockito`; test decoder with sample audio files.
-- Integration tests: Spin up local server mock; test full playback flow.
-- UI tests: Use `crossterm` simulation for key inputs; assert rendered output.
-- Performance: Benchmark startup time, memory usage during playback.
-
-### 13.7 Dependencies and Versions
-Pin in `Cargo.toml`:
-
-```toml
-[dependencies]
-ratatui = "0.26"
-crossterm = "0.27"
-tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
-symphonia = { version = "0.5", features = ["mp3", "flac"] }
-cpal = "0.15"
-rustfft = "6.1"
-config = "0.14"
-tracing = "0.1"
-directories = "5.0"
-keyring = "2" # For secure token storage
-souvlaki = "0.7" # For OS media controls (MPRIS/SMTC)
-```
-
-### 13.8 Build and Deployment
-- CI: Use GitHub Actions with `cargo build --release` for Linux/macOS/Windows.
-- Packaging: Use `cargo-dist` for binaries; include config template.
-- Distribution: Upload to GitHub Releases; consider package managers (e.g., `brew` for macOS).
-
-This section provides actionable details to accelerate implementation while keeping the PRD focused on requirements.
+## 13. Remaining Open Questions
+1. (Resolved) Default scrobbling telemetry tick cadence is **1 second**; reuse the same 1-second UI progress tick to drive Scrobbler updates.
+2. Should Tunez also offer a low-frequency “heartbeat” callback for long tracks (e.g., every 10s) to reduce work for Scrobblers that don’t need per-second updates?
