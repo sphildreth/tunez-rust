@@ -3,6 +3,7 @@ pub mod logging;
 pub mod models;
 pub mod paths;
 pub mod provider;
+pub mod provider_contract;
 pub mod scrobbler;
 
 pub use config::{

@@ -68,7 +68,7 @@ Read first (canonical context)
 
 Objective
 - Phase: Phase 1
-- Sub-phase: Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
+- Sub-phase: Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
 
 Hard constraints (do not violate)
 - Implement only what is required for the chosen scope (no extra screens/features).

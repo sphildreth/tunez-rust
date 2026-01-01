@@ -5,6 +5,8 @@ members = [
     "src/tunez-ui",
     "src/tunez-audio",
     "src/tunez-player",
+    "src/providers/filesystem-provider",
+    "src/providers/melodee-provider",
 ]
 resolver = "2"
 
