@@ -1,0 +1,14 @@
+[package]
+name = "tunez-player"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+rand = { workspace = true }
+thiserror = { workspace = true }
+tunez-core = { path = "../tunez-core" }
+
+[dev-dependencies]
+itertools = "0.13"

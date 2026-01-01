@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use thiserror::Error;
 use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationError};
+use tunez_ui::{run_ui, UiContext};
 
 #[derive(Debug, Parser)]
 #[command(name = "tunez", version, about = "Terminal music player")]
@@ -265,7 +266,7 @@ fn main() -> Result<()> {
                     .unwrap_or_default(),
                 dirs.config_dir().display()
             );
-            // TODO: launch TUI shell once implemented.
+            run_ui(UiContext::new(selection))?;
         }
     }
 
