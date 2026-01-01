@@ -6,10 +6,10 @@ use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationErr
 #[derive(Debug, Parser)]
 #[command(name = "tunez", version, about = "Terminal music player")]
 struct Cli {
-    /// Provider override (takes precedence over config)
+    /// Provider override (global so it applies to subcommands; takes precedence over config)
     #[arg(long, global = true)]
     provider: Option<String>,
-    /// Profile override (takes precedence over config)
+    /// Profile override (global so it applies to subcommands; takes precedence over config)
     #[arg(long, global = true)]
     profile: Option<String>,
     #[command(subcommand)]
@@ -86,38 +86,69 @@ enum PlaySelector {
 enum PlaySelectorError {
     #[error("play requires at least one selector (--id/--playlist/--track/--album/--artist)")]
     MissingSelector,
-    #[error("playlist selector cannot be combined with other selectors")]
+    #[error("playlist selector cannot be combined with track, album, or artist selectors")]
     PlaylistConflict,
+    #[error("internal selector invariant violated: {0}")]
+    InvariantViolation(&'static str),
     #[error("{0}")]
     Provider(#[from] ValidationError),
 }
 
 impl PlayCommand {
-    fn intent(
-        &self,
+    fn into_intent(
+        self,
         config: &Config,
         cli_provider: Option<&str>,
         cli_profile: Option<&str>,
     ) -> Result<PlayIntent, PlaySelectorError> {
+        let PlayCommand {
+            track,
+            album,
+            artist,
+            playlist,
+            id,
+            autoplay,
+        } = self;
+        let selector = Self::build_selector(track, album, artist, playlist, id)?;
         let provider = config.resolve_provider_selection(cli_provider, cli_profile)?;
-        let selector = self.selector()?;
 
         Ok(PlayIntent {
             provider,
             selector,
-            autoplay: self.autoplay,
+            autoplay,
         })
     }
 
-    fn selector(&self) -> Result<PlaySelector, PlaySelectorError> {
-        if let Some(id) = &self.id {
-            return Ok(PlaySelector::Id { id: id.clone() });
+    #[cfg(test)]
+    fn into_selector(self) -> Result<PlaySelector, PlaySelectorError> {
+        let PlayCommand {
+            track,
+            album,
+            artist,
+            playlist,
+            id,
+            autoplay: _,
+        } = self;
+
+        Self::build_selector(track, album, artist, playlist, id)
+    }
+
+    fn build_selector(
+        track: Option<String>,
+        album: Option<String>,
+        artist: Option<String>,
+        playlist: Option<String>,
+        id: Option<String>,
+    ) -> Result<PlaySelector, PlaySelectorError> {
+        // Selector precedence: id > playlist > track > album > artist.
+        if let Some(id) = id {
+            return Ok(PlaySelector::Id { id });
         }
 
-        let has_playlist = self.playlist.is_some();
-        let has_track = self.track.is_some();
-        let has_album = self.album.is_some();
-        let has_artist = self.artist.is_some();
+        let has_playlist = playlist.is_some();
+        let has_track = track.is_some();
+        let has_album = album.is_some();
+        let has_artist = artist.is_some();
 
         if !(has_playlist || has_track || has_album || has_artist) {
             return Err(PlaySelectorError::MissingSelector);
@@ -127,32 +158,29 @@ impl PlayCommand {
             return Err(PlaySelectorError::PlaylistConflict);
         }
 
-        if let Some(name) = &self.playlist {
-            return Ok(PlaySelector::Playlist { name: name.clone() });
+        if let Some(name) = playlist {
+            return Ok(PlaySelector::Playlist { name });
         }
 
-        if let Some(track) = &self.track {
+        if let Some(track) = track {
             return Ok(PlaySelector::TrackSearch {
-                track: track.clone(),
-                artist: self.artist.clone(),
-                album: self.album.clone(),
+                track,
+                artist,
+                album,
             });
         }
 
-        if let Some(album) = &self.album {
-            return Ok(PlaySelector::AlbumSearch {
-                album: album.clone(),
-                artist: self.artist.clone(),
-            });
+        if let Some(album) = album {
+            return Ok(PlaySelector::AlbumSearch { album, artist });
         }
 
-        if let Some(artist) = &self.artist {
-            return Ok(PlaySelector::ArtistSearch {
-                artist: artist.clone(),
-            });
+        if let Some(artist) = artist {
+            return Ok(PlaySelector::ArtistSearch { artist });
         }
 
-        Err(PlaySelectorError::MissingSelector)
+        Err(PlaySelectorError::InvariantViolation(
+            "selector validation yielded no remaining selector",
+        ))
     }
 }
 
@@ -167,8 +195,8 @@ impl PlaySelector {
                 album,
             } => {
                 let mut parts = vec![format!("track=\"{track}\"")];
-                if let Some(artist) = artist {
-                    parts.push(format!("artist=\"{artist}\""));
+                if let Some(artist) = Self::format_artist(artist.as_deref()) {
+                    parts.push(artist);
                 }
                 if let Some(album) = album {
                     parts.push(format!("album=\"{album}\""));
@@ -177,13 +205,17 @@ impl PlaySelector {
             }
             PlaySelector::AlbumSearch { album, artist } => {
                 let mut parts = vec![format!("album=\"{album}\"")];
-                if let Some(artist) = artist {
-                    parts.push(format!("artist=\"{artist}\""));
+                if let Some(artist) = Self::format_artist(artist.as_deref()) {
+                    parts.push(artist);
                 }
                 parts.join(", ")
             }
             PlaySelector::ArtistSearch { artist } => format!("artist=\"{artist}\""),
         }
+    }
+
+    fn format_artist(artist: Option<&str>) -> Option<String> {
+        artist.map(|name| format!("artist=\"{name}\""))
     }
 }
 
@@ -200,27 +232,25 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Play(play)) => {
-            let intent = play.intent(&config, cli.provider.as_deref(), cli.profile.as_deref())?;
-            let profile_suffix = intent
-                .provider
-                .profile
-                .as_deref()
-                .map(|p| format!(" (profile '{p}')"))
-                .unwrap_or_default();
-            tracing::info!(
-                "Play request: provider '{}'{} | selector: {} | autoplay: {}",
+            let intent =
+                play.into_intent(&config, cli.provider.as_deref(), cli.profile.as_deref())?;
+            let provider_label = format!(
+                "{}{}",
                 intent.provider.provider_id,
-                profile_suffix,
-                intent.selector.describe(),
-                intent.autoplay
+                intent
+                    .provider
+                    .profile
+                    .as_deref()
+                    .map(|p| format!(" (profile '{p}')"))
+                    .unwrap_or_default()
             );
-            println!(
-                "Play request resolved for provider '{}'{}: {} (autoplay: {})",
-                intent.provider.provider_id,
-                profile_suffix,
-                intent.selector.describe(),
-                intent.autoplay
+            let selector_description = intent.selector.describe();
+            let play_summary = format!(
+                "provider '{}': {} (autoplay: {})",
+                provider_label, selector_description, intent.autoplay
             );
+            tracing::info!("Play request: {}", play_summary);
+            println!("Play request resolved: {}", play_summary);
         }
         None => {
             let selection = config
@@ -304,7 +334,9 @@ mod tests {
             autoplay: false,
         };
 
-        let err = play.selector().expect_err("selector should be required");
+        let err = play
+            .into_selector()
+            .expect_err("selector should be required");
         assert!(matches!(err, PlaySelectorError::MissingSelector));
     }
 
@@ -319,7 +351,7 @@ mod tests {
             autoplay: false,
         };
 
-        let selector = play.selector().expect("id should be accepted");
+        let selector = play.into_selector().expect("id should be accepted");
         assert_eq!(
             selector,
             PlaySelector::Id {
@@ -339,7 +371,9 @@ mod tests {
             autoplay: true,
         };
 
-        let selector = play.selector().expect("track selector should be valid");
+        let selector = play
+            .into_selector()
+            .expect("track selector should be valid");
         assert_eq!(
             selector,
             PlaySelector::TrackSearch {
@@ -361,7 +395,9 @@ mod tests {
             autoplay: false,
         };
 
-        let err = play.selector().expect_err("conflicting playlist selector");
+        let err = play
+            .into_selector()
+            .expect_err("conflicting playlist selector");
         assert!(matches!(err, PlaySelectorError::PlaylistConflict));
     }
 
@@ -378,12 +414,12 @@ mod tests {
         };
 
         let intent = play
-            .intent(&config, Some("filesystem"), Some("home"))
+            .into_intent(&config, Some("filesystem"), Some("home"))
             .expect("intent should resolve");
 
         assert_eq!(intent.provider.provider_id, "filesystem");
         assert_eq!(intent.provider.profile.as_deref(), Some("home"));
-        assert_eq!(intent.selector.describe(), "track=\"song\"".to_string());
+        assert_eq!(intent.selector.describe(), "track=\"song\"");
         assert!(intent.autoplay);
     }
 }
