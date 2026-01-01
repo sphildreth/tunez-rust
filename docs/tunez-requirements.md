@@ -28,24 +28,82 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 - This section is a **status checklist** for tracking progress by phase.
 - The **normative requirements** are the detailed sections referenced below (e.g., Sections 4–10).
 
-- [x] **Phase 1** — Built-in Providers (this document)
+**Important (repo status vs PRD):** This Phase map is meant to reflect the *current repository implementation status*.
+If you change the code, update the checkboxes here so the PRD doesn’t drift and confuse readers.
+As of **2026-01-01**, this repo includes a working **TUI shell** (tab navigation + Markdown help overlay), plus
+provider/player/audio crates — but **the mockup screens are not yet fully implemented/wired end-to-end**.
+
+- [ ] **Phase 1** — Built-in Providers (this document)
   - Phase 1 sub-phases (recommended; sized for incremental implementation)
     - [x] Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
     - [x] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
     - [x] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
       - Progress update: CLI `play` subcommand now validates selector precedence and resolves provider/profile overrides.
     - [x] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
-    - [x] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
-    - [x] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
-    - [x] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
+    - [ ] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
+    - [ ] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
+    - [ ] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
       - [x] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
       - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
-    - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
-    - [x] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
-    - [x] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
-    - [x] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
-      - Fixed: Scrobbling now disabled by default (§4.10, §6.5)
-      - All quality gates pass: fmt, clippy, test, build --all-features
+    - [ ] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
+    - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
+    - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
+    - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
+
+---
+
+## 1.4 Next steps — get a working, playable TUI (implementation plan)
+
+This section is an *implementation-oriented* checklist to turn the current shell into a working application where
+users can navigate the mockup screens, search/browse via a Provider, and play music.
+
+### Milestone 0 — run the current shell (baseline)
+- [ ] `cargo run -p tunez-cli` launches the TUI reliably (already true today).
+- [ ] Terminal minimum size matches PRD: enforce **80x24** (PRD §5.1).
+- [ ] Make `tunez play ...` launch the TUI (PRD §9.1) and optionally start playback when `--autoplay` is set.
+
+### Milestone 1 — provider wiring (make the UI actually talk to a Provider)
+- [ ] Add a small “provider runtime” that can construct the selected Provider from `Config`/`ProviderSelection`.
+  - Inputs: provider id + optional profile name.
+  - Output: a `dyn Provider` instance plus capabilities.
+  - Constraint: do not block the UI thread on network/filesystem operations.
+- [ ] Extend the UI context to include access to the selected Provider (or a channel to a background task that owns it).
+- [ ] Ensure all Provider errors surface via `ProviderError` categories (PRD §4.1.1 / §4.9).
+
+### Milestone 2 — implement the mockup screens as real views (minimum playable slice)
+Target the smallest end-to-end loop first:
+
+- [ ] **Search view** (PRD §4.3, §5.0):
+  - Enter search mode with `/`.
+  - Call `Provider::search_tracks(...)` and show paged results.
+  - `Enter` on a result: enqueue + start playing (or enqueue-only if not autoplay; pick one and document it).
+
+- [ ] **Queue view** (PRD §4.6, §5.0):
+  - Display the queue and current selection.
+  - Support add/remove/clear/shuffle (at minimum: add + remove + clear).
+
+- [ ] **Now Playing view** (PRD §4.5, §5.0):
+  - Show current track metadata.
+  - Provide play/pause/next/prev and progress display.
+
+### Milestone 3 — hook playback end-to-end (Provider → stream URL → audio → UI state)
+- [ ] On play: resolve `TrackId` → `Provider::get_stream_url(...)` (PRD §4.1.1, §12.1).
+- [ ] Feed the stream URL into the audio layer (`tunez-audio`) via the player (`tunez-player`).
+- [ ] Wire playback controls from the UI to the `Player` state machine (Space, n/p, seek, volume).
+- [ ] Periodically update elapsed/progress UI without blocking (PRD §4.10.1 tick cadence can be reused).
+
+### Milestone 4 — browsing + playlists (capability-gated)
+- [ ] **Library/Browse view**: call `Provider::browse(...)` and render deterministically paged results (PRD §4.4, §4.1.1).
+- [ ] **Playlists view** (only if `capabilities.playlists = true`): list/search/open playlists (PRD §4.7).
+
+### Milestone 5 — resilience and UX polish required for “working app”
+- [ ] Implement non-blocking error UI (toast/banner) and retry affordances (PRD §4.9).
+- [ ] Ensure scrobbling stays opt-in and never blocks playback (PRD §4.10.2, §6.5).
+- [ ] Keep secrets out of config files (PRD §4.2).
+
+### Milestone 6 — Definition of Done alignment
+- [ ] When the above milestones are implemented, re-check Phase 1 sub-phases and “Phase 1 Done” in §1.3.
+- [ ] Only mark Phase 1 done when the MVP acceptance criteria (§10.1) are demonstrably true end-to-end.
 
 - [ ] **Phase 2** — External plugins (optional; see Roadmap)
   - [ ] Add a plugin host (exec-based or dylib-based) that adapts plugins to the Provider interface (11)
@@ -54,37 +112,6 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 - [ ] **Phase 3** — Fancy extras / polish (optional; see Roadmap)
   - [ ] More visualization modes + theme editor (11)
   - [ ] Better caching and offline modes (11)
-
----
-
-## 1. Coding agent template
-This is a **copy/paste prompt** for an external coding agent (or a future you) to start an implementation task. **Coding Agents** should ignore this section.
-
-```text
-You are a senior Rust devloper working on the project `Tunez`.
-
-Read first (canonical context)
-- README.md
-- docs/tunez-requirements.md (PRD)
-- docs/tunez-tui-mockups.md (canonical UI layout)
-
-Objective
-- Phase: Phase 2
-
-Hard constraints (do not violate)
-- Implement only what is required for the chosen scope (no extra screens/features).
-- Preserve existing public APIs unless the PRD explicitly requires a breaking change.
-- Keep provider/scrobbler interfaces stable and provider-agnostic.
-- Keep secrets out of config files; use OS keyring for tokens.
-- Cross-platform behavior: Linux/macOS/Windows terminals.
-
-Definition of Done (reference)
-- Meets PRD requirements for the selected section(s).
-- Quality gates pass: cargo fmt, cargo clippy -D warnings, cargo test.
-- New/changed config keys are documented (example snippet) and validated.
-- Tasks completed in the PRD are updated as complete ('[x]')
-
-```
 
 ---
 
