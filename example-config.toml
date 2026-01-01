@@ -1,0 +1,17 @@
+# Example configuration for Tunez with plugin provider
+config_version = 1
+
+default_provider = "example-plugin"
+profile = "default"
+
+[logging]
+level = "info"
+stdout = true
+
+[providers.example-plugin]
+kind = "plugin"
+
+[providers.example-plugin.profiles.default]
+display_name = "Example Plugin Profile"
+plugin_executable = "./example-plugin.sh"
+plugin_args = []

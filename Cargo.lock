@@ -2729,6 +2729,7 @@ dependencies = [
  "tunez-audio",
  "tunez-core",
  "tunez-player",
+ "tunez-plugin",
  "tunez-ui",
 ]
 

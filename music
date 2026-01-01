@@ -1,0 +1,15 @@
+config_version = 1
+
+default_provider = "filesystem"
+profile = "default"
+
+[logging]
+level = "info"
+stdout = true
+
+[providers.filesystem]
+kind = "filesystem"
+
+[providers.filesystem.profiles.default]
+display_name = "Local Music"
+library_root = "./music"

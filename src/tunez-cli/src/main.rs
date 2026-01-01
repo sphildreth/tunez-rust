@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use thiserror::Error;
 use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationError};
+use tunez_plugin::{ExecPluginProvider, PluginConfig};
 use tunez_ui::{run_ui, UiContext};
 
 #[derive(Debug, Parser)]
@@ -336,6 +337,48 @@ fn create_provider(
             };
 
             let provider = melodee_provider::MelodeeProvider::new(melodee_config)?;
+            Ok(std::sync::Arc::new(provider))
+        }
+        "plugin" => {
+            // Get the plugin executable path from the profile config
+            let executable = if let Some(profile_name) = &selection.profile {
+                if let Some(profile) = provider_config.profiles.get(profile_name) {
+                    profile.plugin_executable.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "'plugin_executable' not found in profile '{}' for provider '{}'",
+                            profile_name,
+                            selection.provider_id
+                        )
+                    })?
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Profile '{}' not found for provider '{}'",
+                        profile_name,
+                        selection.provider_id
+                    ));
+                }
+            } else {
+                return Err(anyhow::anyhow!("Profile required for plugin provider"));
+            };
+
+            let args = if let Some(profile_name) = &selection.profile {
+                if let Some(profile) = provider_config.profiles.get(profile_name) {
+                    profile.plugin_args.clone()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let plugin_config = PluginConfig {
+                executable: std::path::PathBuf::from(executable),
+                args,
+                working_dir: None,
+                env: vec![],
+            };
+
+            let provider = ExecPluginProvider::new(plugin_config)?;
             Ok(std::sync::Arc::new(provider))
         }
         _ => Err(anyhow::anyhow!(
