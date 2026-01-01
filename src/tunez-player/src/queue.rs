@@ -1,10 +1,15 @@
 use rand::{seq::SliceRandom, thread_rng};
+use serde::{Deserialize, Serialize};
 use tunez_core::Track;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct QueueId(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct QueueId(pub(crate) u64);
 
 impl QueueId {
+    pub(crate) fn new(id: u64) -> Self {
+        QueueId(id)
+    }
+
     fn next(seed: &mut u64) -> Self {
         let id = *seed;
         *seed = seed.saturating_add(1);
@@ -128,6 +133,30 @@ impl Queue {
         } else {
             let mut rng = thread_rng();
             self.items.shuffle(&mut rng);
+        }
+    }
+
+    /// Get the next_id value (for persistence).
+    pub(crate) fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
+    /// Reconstruct a Queue from persisted state.
+    pub(crate) fn from_persisted(
+        items: Vec<QueueItem>,
+        current_index: Option<usize>,
+        next_id: u64,
+    ) -> Self {
+        // Validate current_index
+        let current = match current_index {
+            Some(idx) if idx < items.len() => Some(idx),
+            _ => None,
+        };
+
+        Self {
+            items,
+            current,
+            next_id,
         }
     }
 }

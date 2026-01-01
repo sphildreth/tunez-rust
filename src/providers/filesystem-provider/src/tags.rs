@@ -24,7 +24,7 @@ pub fn parse_tags(path: &Path) -> ProviderResult<ParsedTags> {
     let artist = tag.and_then(|t| t.artist().map(|s| s.to_string()));
     let album = tag.and_then(|t| t.album().map(|s| s.to_string()));
     let duration_seconds = Some(properties.duration().as_secs() as u32);
-    let track_number = tag.and_then(|t| t.track()).map(|n| n as u32);
+    let track_number = tag.and_then(|t| t.track());
 
     Ok(ParsedTags {
         title,

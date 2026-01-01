@@ -121,6 +121,101 @@ impl Player {
         self.stop_audio();
     }
 
+    /// Handle a track error by logging, notifying, and skipping to next track.
+    ///
+    /// This implements the PRD §4.9 requirement: "log the error, show a user-visible
+    /// message, and skip the track."
+    ///
+    /// Returns the next track if available, or None if queue is exhausted.
+    /// The `on_error` callback is invoked with the error message for UI display.
+    pub fn handle_track_error<F>(
+        &mut self,
+        error: impl Into<String>,
+        mut on_error: F,
+    ) -> Option<&QueueItem>
+    where
+        F: FnMut(&str),
+    {
+        let message = error.into();
+        let track_info = self
+            .queue
+            .current()
+            .map(|item| format!("{} - {}", item.track.artist, item.track.title))
+            .unwrap_or_else(|| "unknown track".into());
+
+        // Log the error
+        tracing::warn!(
+            track = %track_info,
+            error = %message,
+            "track playback failed; skipping to next"
+        );
+
+        // Notify UI via callback
+        let user_message = format!("Error playing '{}': {}", track_info, message);
+        on_error(&user_message);
+
+        // Stop current audio and skip to next
+        self.stop_audio();
+
+        // Try to advance to next track
+        if let Some(next) = self.queue.advance() {
+            let next_id = next.id;
+            self.state = PlayerState::Buffering { id: next_id };
+            self.queue.current()
+        } else {
+            // No more tracks; go to stopped state
+            self.state = PlayerState::Stopped;
+            None
+        }
+    }
+
+    /// Handle a track error and automatically start playing the next track.
+    ///
+    /// This variant also attempts to play the next track using the audio engine.
+    pub fn handle_track_error_and_play<E, F>(
+        &mut self,
+        engine: &E,
+        error: impl Into<String>,
+        source_fn: impl Fn(&QueueItem) -> AudioSource,
+        mut on_error: F,
+    ) -> Option<&QueueItem>
+    where
+        E: AudioEngine,
+        F: FnMut(&str),
+    {
+        let message = error.into();
+        let track_info = self
+            .queue
+            .current()
+            .map(|item| format!("{} - {}", item.track.artist, item.track.title))
+            .unwrap_or_else(|| "unknown track".into());
+
+        // Log the error
+        tracing::warn!(
+            track = %track_info,
+            error = %message,
+            "track playback failed; skipping to next"
+        );
+
+        // Notify UI via callback
+        let user_message = format!("Error playing '{}': {}", track_info, message);
+        on_error(&user_message);
+
+        // Stop current audio
+        self.stop_audio();
+
+        // Try to advance to next track and play it
+        if self.queue.advance().is_some() {
+            let current = self.queue.current()?;
+            let source = source_fn(current);
+            self.play_with_audio(engine, source)
+        } else {
+            // No more tracks; go to stopped state
+            self.state = PlayerState::Stopped;
+            None
+        }
+    }
+
     fn stop_audio(&mut self) {
         if let Some(handle) = self.audio.take() {
             handle.stop();
@@ -217,5 +312,54 @@ mod tests {
             .expect("should start with audio");
         assert_eq!(current.track.title, "one");
         assert!(matches!(player.state(), PlayerState::Playing { .. }));
+    }
+
+    #[test]
+    fn handle_track_error_skips_to_next() {
+        let mut player = Player::new();
+        player.queue_mut().enqueue_back(track("one"));
+        player.queue_mut().enqueue_back(track("two"));
+        player.play();
+
+        let mut error_messages = Vec::new();
+        let next = player.handle_track_error("decode failed", |msg| {
+            error_messages.push(msg.to_string());
+        });
+
+        assert!(next.is_some());
+        assert_eq!(next.unwrap().track.title, "two");
+        assert_eq!(error_messages.len(), 1);
+        assert!(error_messages[0].contains("decode failed"));
+        assert!(error_messages[0].contains("one")); // track title
+    }
+
+    #[test]
+    fn handle_track_error_stops_at_end_of_queue() {
+        let mut player = Player::new();
+        player.queue_mut().enqueue_back(track("only"));
+        player.play();
+
+        let mut error_count = 0;
+        let next = player.handle_track_error("error", |_| {
+            error_count += 1;
+        });
+
+        assert!(next.is_none());
+        assert_eq!(error_count, 1);
+        assert!(matches!(player.state(), PlayerState::Stopped));
+    }
+
+    #[test]
+    fn handle_track_error_does_not_panic_on_empty_queue() {
+        let mut player = Player::new();
+
+        let mut error_count = 0;
+        let next = player.handle_track_error("error", |_| {
+            error_count += 1;
+        });
+
+        assert!(next.is_none());
+        // Callback should still be called even for unknown track
+        assert_eq!(error_count, 1);
     }
 }

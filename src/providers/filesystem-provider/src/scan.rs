@@ -60,6 +60,7 @@ fn canonicalize_within_root(path: &Path, root: &Path) -> Option<PathBuf> {
     }
 }
 
+#[allow(dead_code)]
 pub fn scan_library(roots: Vec<String>) -> ProviderResult<LibraryIndex> {
     scan_library_with_options(roots, ScanOptions::default())
 }

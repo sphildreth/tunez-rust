@@ -49,7 +49,14 @@ pub struct AudioHandle {
     state: Arc<Mutex<AudioState>>,
     stop_flag: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
-    keepalive: Option<Box<dyn Send>>,
+    /// Keeps audio resources alive until the handle is dropped.
+    /// The stream is kept on the spawning thread (not sent).
+    #[allow(dead_code)]
+    keepalive: Option<Box<dyn std::any::Any + Send>>,
+    /// Non-Send keepalive slot for audio backends (e.g., cpal::Stream).
+    /// Must be dropped on the same thread it was created.
+    #[allow(dead_code)]
+    local_keepalive: Option<Arc<Mutex<Box<dyn std::any::Any>>>>,
 }
 
 impl std::fmt::Debug for AudioHandle {
@@ -87,6 +94,7 @@ impl AudioHandle {
             stop_flag,
             join: Some(join),
             keepalive: None,
+            local_keepalive: None,
         }
     }
 
@@ -95,13 +103,14 @@ impl AudioHandle {
         state: Arc<Mutex<AudioState>>,
         stop_flag: Arc<AtomicBool>,
         join: JoinHandle<()>,
-        keepalive: Box<dyn Send>,
+        keepalive: Arc<Mutex<Box<dyn std::any::Any>>>,
     ) -> Self {
         Self {
             state,
             stop_flag,
             join: Some(join),
-            keepalive: Some(keepalive),
+            keepalive: None,
+            local_keepalive: Some(keepalive),
         }
     }
 
@@ -116,6 +125,7 @@ impl AudioHandle {
         }
         // drop keepalive to release backend resources
         let _ = self.keepalive.take();
+        let _ = self.local_keepalive.take();
     }
 }
 

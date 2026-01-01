@@ -45,6 +45,7 @@ pub fn map_playlist(playlist: &Playlist, provider_id: &str) -> CorePlaylist {
 }
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct MelodeePaging {
     pub current_page: Option<u32>,
     pub page_size: Option<u32>,

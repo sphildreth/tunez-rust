@@ -4,7 +4,9 @@ pub mod models;
 pub mod paths;
 pub mod provider;
 pub mod provider_contract;
+pub mod redact;
 pub mod scrobbler;
+pub mod secrets;
 
 pub use config::{
     Config, ConfigError, LogLevel, LoggingConfig, ProviderConfig, ProviderProfile,
@@ -14,7 +16,9 @@ pub use logging::{init_logging, LoggingError, LoggingGuard};
 pub use models::*;
 pub use paths::{AppDirs, DirsError};
 pub use provider::*;
+pub use redact::{contains_sensitive, redact_secrets};
 pub use scrobbler::*;
+pub use secrets::{CredentialStore, SecretKind, SecretsError, SecretsResult};
 
 pub const APP_NAME: &str = "tunez";
 pub const APP_AUTHOR: &str = "Tunez";

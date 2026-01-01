@@ -1206,6 +1206,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2723,6 +2733,7 @@ name = "tunez-core"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "keyring",
  "serde",
  "serde_json",
  "tempfile",
@@ -2739,7 +2750,11 @@ version = "0.1.0"
 dependencies = [
  "itertools 0.13.0",
  "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
+ "tracing",
  "tunez-audio",
  "tunez-core",
 ]
@@ -3403,6 +3418,12 @@ dependencies = [
  "syn",
  "synstructure",
 ]
+
+[[package]]
+name = "zeroize"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 
 [[package]]
 name = "zerotrie"

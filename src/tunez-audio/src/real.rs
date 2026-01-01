@@ -1,6 +1,5 @@
 use std::{
     fs::File,
-    io::BufReader,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -57,7 +56,7 @@ impl AudioEngine for CpalAudioEngine {
         let state_clone = state.clone();
         let stop_clone = stop_flag.clone();
 
-        let sample_rate = config.sample_rate().0 as usize;
+        let _sample_rate = config.sample_rate().0 as usize;
         let channels = config.channels() as usize;
 
         // Interleave samples; if the source is mono, duplicate to all channels.
@@ -92,15 +91,17 @@ impl AudioEngine for CpalAudioEngine {
                 },
                 None,
             ),
-            format => Err(AudioError::Backend(format!(
-                "unsupported sample format: {format:?}"
-            ))),
+            format => {
+                return Err(AudioError::Backend(format!(
+                    "unsupported sample format: {format:?}"
+                )));
+            }
         }
-        .map_err(|e| AudioError::Backend(e.to_string()))?;
+        .map_err(|e: cpal::BuildStreamError| AudioError::Backend(e.to_string()))?;
 
         stream
             .play()
-            .map_err(|e| AudioError::Backend(e.to_string()))?;
+            .map_err(|e: cpal::PlayStreamError| AudioError::Backend(e.to_string()))?;
 
         let join = thread::spawn({
             let state = state.clone();
@@ -116,21 +117,23 @@ impl AudioEngine for CpalAudioEngine {
             }
         });
 
+        // Keep stream alive by wrapping in Arc<Mutex> (Stream is not Send on some platforms)
+        let stream_keepalive: Arc<Mutex<Box<dyn std::any::Any>>> =
+            Arc::new(Mutex::new(Box::new(stream)));
+
         Ok(AudioHandle::with_keepalive(
             state,
             stop_flag,
             join,
-            Box::new(stream),
+            stream_keepalive,
         ))
     }
 }
 
 fn decode_to_f32(path: &Path) -> AudioResult<Vec<f32>> {
     let file = File::open(path).map_err(|e| AudioError::Io(e.to_string()))?;
-    let mss = symphonia::core::io::MediaSourceStream::new(
-        Box::new(BufReader::new(file)),
-        Default::default(),
-    );
+    // File implements MediaSource directly; no BufReader wrapper needed.
+    let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
@@ -148,8 +151,11 @@ fn decode_to_f32(path: &Path) -> AudioResult<Vec<f32>> {
     let track = format
         .default_track()
         .ok_or_else(|| AudioError::Backend("no default track".into()))?;
+    // Extract values we need before the loop to avoid holding a borrow across next_packet()
+    let track_id = track.id;
+    let codec_params = track.codec_params.clone();
     let mut decoder = default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make(&codec_params, &DecoderOptions::default())
         .map_err(|e| AudioError::Backend(e.to_string()))?;
 
     let mut samples = Vec::new();
@@ -159,7 +165,7 @@ fn decode_to_f32(path: &Path) -> AudioResult<Vec<f32>> {
             Err(symphonia::core::errors::Error::IoError(_)) => break,
             Err(err) => return Err(AudioError::Backend(err.to_string())),
         };
-        if packet.track_id() != track.id {
+        if packet.track_id() != track_id {
             continue;
         }
         let audio_buf = decoder
