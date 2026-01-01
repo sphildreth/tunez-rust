@@ -35,8 +35,8 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
     - [x] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
       - Progress update: CLI `play` subcommand now validates selector precedence and resolves provider/profile overrides.
     - [x] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
-    - [ ] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
-    - [ ] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
+    - [x] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
+    - [x] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
     - [ ] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
       - [ ] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
       - [ ] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
@@ -68,7 +68,7 @@ Read first (canonical context)
 
 Objective
 - Phase: Phase 1
-- Sub-phase: Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
+- Sub-phase: Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
 
 Hard constraints (do not violate)
 - Implement only what is required for the chosen scope (no extra screens/features).

@@ -9,6 +9,7 @@ publish = false
 rand = { workspace = true }
 thiserror = { workspace = true }
 tunez-core = { path = "../tunez-core" }
+tunez-audio = { path = "../tunez-audio" }
 
 [dev-dependencies]
 itertools = "0.13"

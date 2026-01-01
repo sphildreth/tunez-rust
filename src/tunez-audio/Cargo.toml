@@ -1,0 +1,18 @@
+[package]
+name = "tunez-audio"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[features]
+# Real audio output using cpal + symphonia. Off by default to keep CI lightweight.
+cpal-backend = ["cpal", "symphonia"]
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Optional real audio stack.
+cpal = { version = "0.15", optional = true }
+symphonia = { version = "0.5.3", optional = true }

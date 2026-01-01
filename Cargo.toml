@@ -3,6 +3,7 @@ members = [
     "src/tunez-core",
     "src/tunez-cli",
     "src/tunez-ui",
+    "src/tunez-audio",
     "src/tunez-player",
 ]
 resolver = "2"
