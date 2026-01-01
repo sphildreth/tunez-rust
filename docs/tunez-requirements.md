@@ -60,7 +60,7 @@ You are a senior Rust devloper working on the project `Tunez`.
 
 Read first (canonical context)
 - README.md
-- docs/tunez-requirements.md (this PRD)
+- docs/tunez-requirements.md (PRD)
 - docs/tunez-tui-mockups.md (canonical UI layout)
 
 Objective
