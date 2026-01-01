@@ -14,7 +14,7 @@
 - **External plugins (Phase 2, optional):** out-of-tree extensions loaded/hosted by Tunez (not supported in Phase 1).
 
 ### 1.1 Problem statement
-Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/search a library and play music from one or more backends—while also being “fun”: smooth transitions, animated UI widgets, and a real-time spectrum/waveform visualization.
+Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/search a library and play music from one or more Providers—while also being “fun”: smooth transitions, animated UI widgets, and a real-time spectrum/waveform visualization.
 
 **Target user proficiency**
 - Tunez is designed for terminal-comfortable users (tmux/SSH, keyboard-first workflows) who are comfortable editing TOML config files.
@@ -84,7 +84,7 @@ The Phase 1 architecture SHOULD remain future-proof for Phase 2 (external plugin
 - Providers can be enabled/disabled via compile-time features and runtime configuration.
 
 #### 4.1.1 Provider interface
-Tunez MUST define a Provider abstraction that supports a common set of operations. At minimum:
+Tunez MUST define a Provider abstraction (`Provider` trait) that includes a common set of operations. At minimum, the trait MUST include:
 
 **MUST (Core operations exposed by Tunez)**
 - `search_tracks(query, filters, paging)`
@@ -96,7 +96,7 @@ Tunez MUST define a Provider abstraction that supports a common set of operation
 - `get_track(track_id)` (metadata)
 - `get_stream_url(track_id)` -> returns a **stream URL** (Provider returns a URL only in Phase 1)
 
-For Providers that do not support a given operation, the Provider MUST return `ProviderError::NotSupported`.
+Provider implementations that do not support a given operation MUST return `ProviderError::NotSupported`.
 
 **SHOULD**
 - `lyrics(track_id)`
@@ -170,8 +170,6 @@ For Providers that do not support a given operation, the Provider MUST return `P
 
 **SHOULD**
 - Providers interacting with rate-limited APIs SHOULD implement client-side backoff (and optional rate limiting) on 429/503-style responses.
-
-**SHOULD**
 - Login UX:
   - `tunez auth login --provider <id> --profile <name>`
   - `tunez auth status`
@@ -410,7 +408,7 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 ## 6. Non-Functional Requirements
 
 ### 6.1 Performance
-- Startup: < 1s to show UI
+- Startup: < 1s to show the UI shell (e.g., Splash/Loading) on typical hardware
 - UI remains responsive while streaming/decoding
 - Visualization degrades gracefully on slow terminals
 
@@ -421,6 +419,10 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 ### 6.3 Security
 - TLS by default where applicable
 - Secrets in OS keyring; file fallback only if explicitly allowed
+
+### 6.4 Portability / distribution
+- `cargo install tunez`
+- Prebuilt binaries for Linux/macOS/Windows (GitHub Releases)
 
 ### 6.5 Privacy
 **MUST**
@@ -433,9 +435,13 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 - Provide a way to purge local scrobble queues (and other cached telemetry/state) without uninstalling Tunez.
 - Avoid including full URLs with tokens or personally identifying info in logs; redact sensitive values where feasible.
 
-### 6.4 Portability / distribution
-- `cargo install tunez`
-- Prebuilt binaries for Linux/macOS/Windows (GitHub Releases)
+### 6.6 Logging & diagnostics
+**MUST**
+- Tunez MUST support configurable log verbosity (e.g., via config and/or `--log-level`).
+- Log files MUST be bounded via rotation and/or retention limits to avoid unbounded disk growth.
+
+**SHOULD**
+- Redact sensitive values (tokens, URLs with embedded credentials) in logs where feasible.
 
 ### 6.7 Dependencies & licensing
 **MUST**
@@ -447,14 +453,6 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 
 **SHOULD**
 - Providers/Scrobblers SHOULD have a clear deprecation path for changed behaviors (warn + migrate) rather than silent behavior changes.
-
-### 6.6 Logging & diagnostics
-**MUST**
-- Tunez MUST support configurable log verbosity (e.g., via config and/or `--log-level`).
-- Log files MUST be bounded via rotation and/or retention limits to avoid unbounded disk growth.
-
-**SHOULD**
-- Redact sensitive values (tokens, URLs with embedded credentials) in logs where feasible.
 
 ---
 
@@ -734,3 +732,54 @@ For all other operations, an MVP-capable Provider MAY return `ProviderError::Not
 ## 13. Remaining Open Questions
 1. (Resolved) Default scrobbling telemetry tick cadence is **1 second**; reuse the same 1-second UI progress tick to drive Scrobbler updates.
 2. Should Tunez also offer a low-frequency “heartbeat” callback for long tracks (e.g., every 10s) to reduce work for Scrobblers that don’t need per-second updates?
+
+---
+
+## 14. Appendix
+
+### 14.1 Example `config.toml` (illustrative)
+This is a non-normative example showing the intended shape of TOML configuration. Exact keys may evolve with `config_version`.
+
+```toml
+config_version = 1
+
+default_provider = "filesystem"
+profile = "home"
+
+# Scrobbling is opt-in and disabled unless explicitly enabled.
+default_scrobbler = "listenbrainz"
+
+[providers.filesystem]
+library_root = "/mnt/music"
+
+[providers.melodee]
+base_url = "https://music.example.com"
+user = "steven@example.com"
+
+[scrobbling]
+enabled = false
+
+[scrobbling.providers.melodee]
+enabled = true
+
+[logging]
+log_level = "info"
+
+[ui]
+theme = "AfterDark"
+
+[ui.keybindings]
+play_pause = "Space"
+next = "n"
+previous = "p"
+search = "/"
+help = "?"
+
+[cache]
+# Provider-gated: only applies when offline download is supported.
+enabled = false
+download_location = "/mnt/music/.tunez-cache"
+max_size_gb = 20
+eviction_policy = "lru"
+ttl_days = 14
+```
