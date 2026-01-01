@@ -11,5 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+clap = { workspace = true }
 tunez-core = { path = "../tunez-core" }
 tracing = { workspace = true }

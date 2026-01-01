@@ -31,8 +31,8 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 - [ ] **Phase 1** — Built-in Providers (this document)
   - Phase 1 sub-phases (recommended; sized for incremental implementation)
     - [x] Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
-    - [ ] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
-    - [ ] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
+    - [x] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
+    - [x] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
     - [ ] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
     - [ ] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
     - [ ] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
@@ -66,8 +66,8 @@ Read first (canonical context)
 - docs/tunez-tui-mockups.md (canonical UI layout)
 
 Objective
-- Phase: Phase 1
-- Sub-phase: Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
+- Phase: <phase>
+- Sub-phase: <sub-phase>
 
 Hard constraints (do not violate)
 - Implement only what is required for the chosen scope (no extra screens/features).
@@ -80,6 +80,7 @@ Definition of Done (reference)
 - Meets PRD requirements for the selected section(s).
 - Quality gates pass: cargo fmt, cargo clippy -D warnings, cargo test.
 - New/changed config keys are documented (example snippet) and validated.
+- Tasks completed in the PRD are updated as complete ('[x]')
 
 ```
 

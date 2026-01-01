@@ -1,5 +1,6 @@
 use crate::paths::AppDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -18,6 +19,8 @@ pub struct Config {
     pub default_scrobbler: Option<String>,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub providers: BTreeMap<String, ProviderConfig>,
 }
 
 impl Default for Config {
@@ -28,6 +31,7 @@ impl Default for Config {
             profile: None,
             default_scrobbler: None,
             logging: LoggingConfig::default(),
+            providers: BTreeMap::new(),
         }
     }
 }
@@ -100,6 +104,17 @@ pub enum ConfigError {
 pub enum ValidationError {
     #[error("unsupported config_version {found}, expected {expected}")]
     UnsupportedVersion { found: u32, expected: u32 },
+    #[error("no providers configured; set default_provider and providers.<id> blocks")]
+    NoProvidersConfigured,
+    #[error("default_provider '{provider_id}' not found in providers config")]
+    MissingProvider { provider_id: String },
+    #[error("profile '{profile}' not found under provider '{provider_id}'")]
+    MissingProfile {
+        provider_id: String,
+        profile: String,
+    },
+    #[error("provider selection is required (set default_provider or pass --provider)")]
+    MissingProviderSelection,
 }
 
 impl Config {
@@ -133,8 +148,96 @@ impl Config {
                 expected: CURRENT_CONFIG_VERSION,
             });
         }
+
+        if let Some(provider_id) = &self.default_provider {
+            let provider = self.providers.get(provider_id).ok_or_else(|| {
+                if self.providers.is_empty() {
+                    ValidationError::NoProvidersConfigured
+                } else {
+                    ValidationError::MissingProvider {
+                        provider_id: provider_id.clone(),
+                    }
+                }
+            })?;
+
+            if let Some(profile) = &self.profile {
+                if !provider.profiles.contains_key(profile) {
+                    return Err(ValidationError::MissingProfile {
+                        provider_id: provider_id.clone(),
+                        profile: profile.clone(),
+                    });
+                }
+            }
+        } else if self.profile.is_some() {
+            return Err(ValidationError::MissingProviderSelection);
+        }
+
         Ok(())
     }
+
+    pub fn resolve_provider_selection(
+        &self,
+        cli_provider: Option<&str>,
+        cli_profile: Option<&str>,
+    ) -> Result<ProviderSelection, ValidationError> {
+        let provider_id = cli_provider
+            .or(self.default_provider.as_deref())
+            .ok_or(ValidationError::MissingProviderSelection)?;
+
+        let provider = self.providers.get(provider_id).ok_or_else(|| {
+            if self.providers.is_empty() {
+                ValidationError::NoProvidersConfigured
+            } else {
+                ValidationError::MissingProvider {
+                    provider_id: provider_id.to_string(),
+                }
+            }
+        })?;
+
+        let profile = cli_profile
+            .or(self.profile.as_deref())
+            .map(|p| p.to_string());
+
+        if let Some(profile_id) = &profile {
+            if !provider.profiles.contains_key(profile_id) {
+                return Err(ValidationError::MissingProfile {
+                    provider_id: provider_id.to_string(),
+                    profile: profile_id.clone(),
+                });
+            }
+        }
+
+        Ok(ProviderSelection {
+            provider_id: provider_id.to_string(),
+            profile,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderConfig {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, ProviderProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderProfile {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub library_root: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSelection {
+    pub provider_id: String,
+    pub profile: Option<String>,
 }
 
 fn default_config_version() -> u32 {
@@ -175,5 +278,59 @@ mod tests {
             result,
             Err(ValidationError::UnsupportedVersion { .. })
         ));
+    }
+
+    #[test]
+    fn missing_provider_when_default_set_is_invalid() {
+        let mut config = Config::default();
+        config.default_provider = Some("melodee".into());
+        let result = config.validate();
+        assert!(matches!(
+            result,
+            Err(ValidationError::NoProvidersConfigured)
+        ));
+    }
+
+    #[test]
+    fn missing_profile_is_invalid() {
+        let mut providers = BTreeMap::new();
+        providers.insert("filesystem".into(), ProviderConfig::default());
+
+        let mut config = Config::default();
+        config.default_provider = Some("filesystem".into());
+        config.profile = Some("home".into());
+        config.providers = providers;
+
+        let result = config.validate();
+        assert!(matches!(
+            result,
+            Err(ValidationError::MissingProfile { .. })
+        ));
+    }
+
+    #[test]
+    fn resolve_provider_prefers_cli_over_default() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert("home".into(), ProviderProfile::default());
+
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "filesystem".into(),
+            ProviderConfig {
+                kind: Some("filesystem".into()),
+                profiles,
+            },
+        );
+
+        let mut config = Config::default();
+        config.default_provider = Some("filesystem".into());
+        config.providers = providers;
+
+        let selection = config
+            .resolve_provider_selection(Some("filesystem"), Some("home"))
+            .expect("selection should succeed");
+
+        assert_eq!(selection.provider_id, "filesystem");
+        assert_eq!(selection.profile.as_deref(), Some("home"));
     }
 }
