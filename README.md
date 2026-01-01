@@ -27,6 +27,37 @@ Tunez is a fast, keyboard-first terminal music player with a modular “Provider
 - Cross-platform terminal behavior (Linux/macOS/Windows)
 - Modular from day 1: built-in Providers (Phase 1), future-proof for external plugins (Phase 2)
 
+## Getting started (current scaffold)
+
+```bash
+cargo fmt
+cargo clippy -- -D warnings
+cargo test
+cargo run -p tunez-cli
+```
+
+## Workspace layout (in progress)
+
+- `src/tunez-core/` — shared utilities (config loading, logging bootstrap, app paths)
+- `src/tunez-cli/` — binary entrypoint (`tunez`)
+- Planned: `src/tunez-ui/`, `src/tunez-player/`, `src/tunez-audio/`, `src/tunez-viz/`, `src/providers/` (see PRD)
+
+## Configuration
+
+- Default config path: `${CONFIG_DIR}/tunez/config.toml` (resolved via `directories`).
+- Schema versioned by `config_version`; unknown/missing file uses safe defaults.
+
+Example snippet (logging fields added in Phase 1A):
+
+```toml
+config_version = 1
+
+[logging]
+level = "info"        # trace|debug|info|warn|error
+max_log_files = 7     # retention; oldest files pruned
+stdout = true         # also emit logs to stdout
+```
+
 ## Repository layout
 
 Current:
@@ -34,16 +65,17 @@ Current:
 - `docs/` — PRD and ASCII TUI mockups
 - `docs-site/` — reserved for future documentation site
 - `scripts/` — reserved for build/dev scripts
+- `src/` — Rust workspace crates
 
-Planned Rust workspace layout (see PRD):
+Planned Rust workspace layout (see PRD; crates will live under `src/`):
 
-- `tunez-core/` — domain types, Provider traits, errors
-- `tunez-ui/` — ratatui UI, themes, keybindings
-- `tunez-player/` — queue + playback state machine
-- `tunez-audio/` — stream reader, decoder, output, buffering
-- `tunez-viz/` — spectrum/waveform computation
-- `tunez-cli/` — CLI parsing and command dispatch
-- `providers/` — built-in Provider crates
+- `src/tunez-core/` — domain types, Provider traits, errors
+- `src/tunez-ui/` — ratatui UI, themes, keybindings
+- `src/tunez-player/` — queue + playback state machine
+- `src/tunez-audio/` — stream reader, decoder, output, buffering
+- `src/tunez-viz/` — spectrum/waveform computation
+- `src/tunez-cli/` — CLI parsing and command dispatch
+- `src/providers/` — built-in Provider crates
 
 ## Development (once implementation lands)
 

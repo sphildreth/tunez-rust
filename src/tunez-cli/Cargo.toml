@@ -1,0 +1,15 @@
+[package]
+name = "tunez-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "tunez"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+tunez-core = { path = "../tunez-core" }
+tracing = { workspace = true }

@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "src/tunez-core",
+    "src/tunez-cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+authors = ["Tunez Contributors"]
+readme = "README.md"
+
+[workspace.dependencies]
+directories = "5"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "ansi", "env-filter"] }
+tracing-appender = "0.2"
