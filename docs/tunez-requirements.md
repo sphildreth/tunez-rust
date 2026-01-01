@@ -25,94 +25,60 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 - Fun engineering challenge (audio pipeline + rendering loop + async networking)
 
 ### 1.3 Phase map
+- This section is a **status checklist** for tracking progress by phase.
+- The **normative requirements** are the detailed sections referenced below (e.g., Sections 4–10).
+
 - [ ] **Phase 1** — Built-in Providers (this document)
-- [ ] **Phase 2** — External plugins (optional)
-- [ ] **Phase 3** — Fancy extras / polish (optional)
+  - Phase 1 sub-phases (recommended; sized for incremental implementation)
+    - [ ] Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
+    - [ ] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
+    - [ ] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
+    - [ ] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
+    - [ ] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
+    - [ ] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
+    - [ ] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
+    - [ ] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
+    - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
+    - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
+    - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
+
+- [ ] **Phase 2** — External plugins (optional; see Roadmap)
+  - [ ] Add a plugin host (exec-based or dylib-based) that adapts plugins to the Provider interface (11)
+  - [ ] Keep Phase 1 Providers working unchanged (11)
+
+- [ ] **Phase 3** — Fancy extras / polish (optional; see Roadmap)
+  - [ ] More visualization modes + theme editor (11)
+  - [ ] Better caching and offline modes (11)
 
 ---
 
 ## 1. Coding agent template
-```
-You are a coding agent working in a VS Code workspace on the project `Tunez`.
+This is a **copy/paste prompt** for an external coding agent (or a future you) to start an implementation task. **Coding Agents** should ignore this section.
+
+```text
+You are a senior Rust devloper working on the project `Tunez`.
+
+Read first (canonical context)
+- README.md
+- docs/tunez-requirements.md (this PRD)
+- docs/tunez-tui-mockups.md (canonical UI layout)
 
 Objective
-- Complete: <PHASE_NAME> (Phase <N>)
-- Primary deliverable(s): <bullets>
+- Phase: Phase 1
+- Sub-phase: Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
 
 Hard constraints (do not violate)
-- Implement only what is required for this phase. No extra features, screens, or “nice-to-haves”.
-- Preserve existing public APIs unless the phase explicitly requires a breaking change.
+- Implement only what is required for the chosen scope (no extra screens/features).
+- Preserve existing public APIs unless the PRD explicitly requires a breaking change.
 - Keep provider/scrobbler interfaces stable and provider-agnostic.
 - Keep secrets out of config files; use OS keyring for tokens.
 - Cross-platform behavior: Linux/macOS/Windows terminals.
 
-Context you should read first (in this repo)
-- `README.md`
-- `docs/tunez-requirements.md` (this PRD)
-- `docs/tunez-tui-mockups.md` (canonical UI layout)
+Definition of Done (reference)
+- Meets PRD requirements for the selected section(s).
+- Quality gates pass: cargo fmt, cargo clippy -D warnings, cargo test.
+- New/changed config keys are documented (example snippet) and validated.
 
-Scope for this phase
-IN SCOPE
-- <list the exact features/requirements to implement>
-
-OUT OF SCOPE
-- <list explicit non-goals for this phase>
-
-Definition of Done (must all be true)
-- Requirements implemented exactly as written for this phase.
-- Code compiles on Linux.
-- Quality gates pass: `cargo fmt`, `cargo clippy -D warnings`, `cargo test`.
-- User-visible behavior is verifiable with clear steps.
-- Any new config keys are documented (example snippet) and validated.
-
-Deliverables checklist
-- [ ] Code changes implementing the phase
-- [ ] Updated docs (as needed): PRD notes / config examples / usage
-- [ ] Tests updated/added where it makes sense (fast + deterministic)
-- [ ] Run commands + results captured in the final summary
-
-Documentation checklist (required when applicable)
-- [ ] Root `README.md` updated if this phase changes: build/run steps, prerequisites, repo layout, CLI, config shape, Providers/Scrobblers
-- [ ] PRD updated if requirements/scope/decisions change (avoid drift)
-- [ ] UI mockups referenced/updated if UX behavior changes
-- [ ] Any new config keys documented with a minimal example snippet
-
-Implementation guidance
-- Prefer a small, coherent Rust workspace layout (core / ui / player / audio / viz / cli / providers).
-- Add new crates only when it reduces coupling.
-- Model changes as small commits/patches; keep diffs focused.
-
-Required work approach
-1) Repo reconnaissance
-  - Identify the current crate/workspace layout and what already exists.
-  - Locate any existing traits/types relevant to this phase.
-
-2) Design a minimal plan
-  - Produce a short step plan (3–7 steps) and then execute it.
-  - Call out any ambiguities; if blocked, ask up to 3 targeted questions.
-
-3) Implement
-  - Make the smallest set of changes to satisfy the phase.
-  - If you introduce new abstractions, show why they are required.
-
-4) Verify
-  - Run `cargo fmt`, `cargo clippy -D warnings`, `cargo test`.
-  - If tests fail due to unrelated pre-existing issues, do not “fix the world”; report them.
-
-5) Handoff summary
-  - Provide: what changed, where, how to run, how to verify, and any follow-ups.
-
-What to return at the end
-- A concise summary of changes (grouped by crate/file).
-- The exact commands run and whether they passed.
-- Any known limitations or deferred items explicitly marked.
-
-Phase-specific details (fill these in before running)
-- Phase name: <PHASE_NAME>
-- Related PRD sections: <e.g., 4.1, 4.5, 9.1>
-- Workspace path: <e.g., /home/steven/source/tunez>
-- Feature flags involved (if any): <e.g., provider-filesystem>
-- Acceptance criteria: <bullet list>
 ```
 
 ---
