@@ -61,7 +61,7 @@ impl ScrobblerManager {
             tick_interval: Duration::from_secs(1),
             last_tick: None,
             last_position: 0,
-            enabled: true,
+            enabled: false,
             error_callback: None,
         }
     }
@@ -266,6 +266,7 @@ mod tests {
         let scrobbler = Arc::new(MockScrobbler::new());
         let mut manager =
             ScrobblerManager::new(Some(scrobbler.clone()), "Tunez", Some("test-device".into()));
+        manager.set_enabled(true); // Explicitly enable (disabled by default per PRD §4.10)
 
         let mut player = Player::new();
         player.queue_mut().enqueue_back(test_track("Test Song"));
@@ -285,6 +286,7 @@ mod tests {
 
         let mut manager =
             ScrobblerManager::new(Some(scrobbler.clone()), "Tunez", Some("test-device".into()));
+        manager.set_enabled(true); // Explicitly enable (disabled by default per PRD §4.10)
 
         let mut player = Player::new();
         player.queue_mut().enqueue_back(test_track("Test Song"));
@@ -323,6 +325,34 @@ mod tests {
     }
 
     #[test]
+    fn scrobbling_is_disabled_by_default() {
+        // Per PRD §4.10: Scrobbling MUST be disabled by default unless explicitly enabled
+        let scrobbler = Arc::new(MockScrobbler::new());
+        let mut manager =
+            ScrobblerManager::new(Some(scrobbler.clone()), "Tunez", Some("test-device".into()));
+
+        // Do not call set_enabled - test the default behavior
+        let mut player = Player::new();
+        player.queue_mut().enqueue_back(test_track("Test Song"));
+        player.play();
+
+        manager.on_state_change(&player, ScrobblePlaybackState::Started);
+        manager.tick(&player, 10);
+        manager.on_track_ended(&player);
+
+        // No submissions should occur because scrobbling is disabled by default
+        let submissions = scrobbler.submissions();
+        assert!(
+            submissions.is_empty(),
+            "scrobbling should be disabled by default"
+        );
+        assert!(
+            !manager.is_active(),
+            "manager should not be active when disabled"
+        );
+    }
+
+    #[test]
     fn no_scrobbler_configured_is_safe() {
         let mut manager = ScrobblerManager::new(None, "Tunez", None);
 
@@ -348,6 +378,7 @@ mod tests {
 
         let mut manager =
             ScrobblerManager::new(Some(scrobbler.clone()), "Tunez", Some("test-device".into()));
+        manager.set_enabled(true); // Explicitly enable (disabled by default per PRD §4.10)
         manager.set_error_callback(move |_msg| {
             error_count_clone.fetch_add(1, Ordering::SeqCst);
         });

@@ -14,6 +14,14 @@ use tunez_core::Track;
 /// Version of the queue persistence format.
 const PERSISTENCE_VERSION: u32 = 1;
 
+/// Maximum number of items allowed in a persisted queue.
+/// Prevents memory exhaustion from maliciously crafted files.
+const MAX_QUEUE_ITEMS: usize = 10_000;
+
+/// Maximum allowed file size for queue persistence (10 MB).
+/// Prevents loading extremely large files that could exhaust memory.
+const MAX_QUEUE_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 /// Queue persistence errors.
 #[derive(Debug, Error)]
 pub enum QueuePersistenceError {
@@ -31,6 +39,12 @@ pub enum QueuePersistenceError {
 
     #[error("queue format version {found} is not supported (expected {expected})")]
     UnsupportedVersion { found: u32, expected: u32 },
+
+    #[error("queue file too large ({size} bytes, max {max} bytes)")]
+    FileTooLarge { size: u64, max: u64 },
+
+    #[error("queue has too many items ({count}, max {max})")]
+    TooManyItems { count: usize, max: usize },
 }
 
 pub type QueuePersistenceResult<T> = Result<T, QueuePersistenceError>;
@@ -176,6 +190,19 @@ impl QueuePersistence {
 
     /// Attempt to load a queue from a specific file path.
     fn try_load(&self, path: &Path) -> QueuePersistenceResult<Queue> {
+        // Check file size before loading to prevent memory exhaustion
+        let metadata = fs::metadata(path).map_err(|source| QueuePersistenceError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let file_size = metadata.len();
+        if file_size > MAX_QUEUE_FILE_SIZE {
+            return Err(QueuePersistenceError::FileTooLarge {
+                size: file_size,
+                max: MAX_QUEUE_FILE_SIZE,
+            });
+        }
+
         let file = fs::File::open(path).map_err(|source| QueuePersistenceError::Read {
             path: path.to_path_buf(),
             source,
@@ -192,6 +219,14 @@ impl QueuePersistence {
             return Err(QueuePersistenceError::UnsupportedVersion {
                 found: persisted.version,
                 expected: PERSISTENCE_VERSION,
+            });
+        }
+
+        // Bounds check on item count
+        if persisted.items.len() > MAX_QUEUE_ITEMS {
+            return Err(QueuePersistenceError::TooManyItems {
+                count: persisted.items.len(),
+                max: MAX_QUEUE_ITEMS,
             });
         }
 
@@ -362,5 +397,46 @@ mod tests {
         // The backup was created before the second save, so it has only "original"
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded.items()[0].track.title, "Track original");
+    }
+
+    #[test]
+    fn rejects_oversized_file() {
+        let dir = tempdir().unwrap();
+        let persistence = QueuePersistence::new(dir.path());
+
+        // Create a file larger than MAX_QUEUE_FILE_SIZE
+        // We'll use a smaller test limit by writing a large JSON array
+        let large_data = "x".repeat((MAX_QUEUE_FILE_SIZE + 1) as usize);
+        fs::write(&persistence.queue_path, large_data).unwrap();
+
+        // Should fall back to empty queue (file too large is treated as corruption)
+        let loaded = persistence.load().unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rejects_too_many_items() {
+        let dir = tempdir().unwrap();
+        let persistence = QueuePersistence::new(dir.path());
+
+        // Create a valid JSON with too many items
+        let items: Vec<_> = (0..MAX_QUEUE_ITEMS + 1)
+            .map(|i| PersistedQueueItem {
+                id: i as u64,
+                track: test_track(&i.to_string()),
+            })
+            .collect();
+        let persisted = PersistedQueue {
+            version: PERSISTENCE_VERSION,
+            items,
+            current_index: None,
+            next_id: (MAX_QUEUE_ITEMS + 1) as u64,
+        };
+        let json = serde_json::to_string(&persisted).unwrap();
+        fs::write(&persistence.queue_path, json).unwrap();
+
+        // Should fall back to empty queue
+        let loaded = persistence.load().unwrap();
+        assert!(loaded.is_empty());
     }
 }

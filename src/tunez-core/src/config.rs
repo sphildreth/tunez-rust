@@ -42,6 +42,10 @@ pub struct LoggingConfig {
     pub level: LogLevel,
     #[serde(default = "default_max_log_files")]
     pub max_log_files: usize,
+    /// Maximum size of each log file in bytes before rotation.
+    /// Default is 10 MB. Set to 0 to disable size-based rotation.
+    #[serde(default = "default_max_log_file_size")]
+    pub max_log_file_size: u64,
     #[serde(default = "default_stdout_enabled")]
     pub stdout: bool,
     #[serde(default)]
@@ -53,6 +57,7 @@ impl Default for LoggingConfig {
         Self {
             level: default_log_level(),
             max_log_files: default_max_log_files(),
+            max_log_file_size: default_max_log_file_size(),
             stdout: default_stdout_enabled(),
             file_name: None,
         }
@@ -252,6 +257,11 @@ fn default_max_log_files() -> usize {
     7
 }
 
+/// Default max log file size: 10 MB
+fn default_max_log_file_size() -> u64 {
+    10 * 1024 * 1024
+}
+
 fn default_stdout_enabled() -> bool {
     true
 }
@@ -265,6 +275,7 @@ mod tests {
         let config = Config::default();
         assert!(config.validate().is_ok());
         assert_eq!(config.logging.max_log_files, 7);
+        assert_eq!(config.logging.max_log_file_size, 10 * 1024 * 1024); // 10 MB
         assert!(config.logging.stdout);
         assert_eq!(config.logging.level, LogLevel::Info);
     }

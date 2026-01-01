@@ -225,6 +225,71 @@ impl CredentialStore {
         let _ = self.delete(provider, profile, SecretKind::ApiKey);
         Ok(())
     }
+
+    /// Check if the keyring backend is available on this system.
+    ///
+    /// Returns `true` if the keyring is accessible, `false` otherwise.
+    /// This can be used to determine if secure credential storage is available
+    /// and to provide appropriate warnings to users on headless systems.
+    pub fn is_available(&self) -> bool {
+        // Try to create a test entry - if this fails, keyring is not available
+        keyring::Entry::new(&self.service, "tunez_availability_test").is_ok()
+    }
+
+    /// Check keyring availability and log a warning if unavailable.
+    ///
+    /// Returns `true` if available, `false` with a logged warning otherwise.
+    pub fn check_availability(&self) -> bool {
+        if self.is_available() {
+            true
+        } else {
+            tracing::warn!(
+                "OS keyring is not available on this system. \
+                 Secure credential storage will not work. \
+                 Consider running with a display server or using a headless keyring solution."
+            );
+            false
+        }
+    }
+}
+
+impl SecretsError {
+    /// Check if this error indicates the keyring is unavailable on the system.
+    pub fn is_keyring_unavailable(&self) -> bool {
+        matches!(
+            self,
+            SecretsError::Unavailable(_) | SecretsError::AccessDenied(_)
+        )
+    }
+
+    /// Get a user-friendly message for this error.
+    pub fn user_message(&self) -> String {
+        match self {
+            SecretsError::NotFound { key } => {
+                format!(
+                    "Credential '{}' not found. Please run 'tunez auth login' to authenticate.",
+                    key
+                )
+            }
+            SecretsError::AccessDenied(msg) => {
+                format!(
+                    "Access to credential storage was denied: {}. \
+                     Check your system's keyring permissions.",
+                    msg
+                )
+            }
+            SecretsError::Unavailable(msg) => {
+                format!(
+                    "Secure credential storage is not available: {}. \
+                     On headless systems, consider using a keyring daemon or alternative authentication.",
+                    msg
+                )
+            }
+            SecretsError::Other(msg) => {
+                format!("Credential storage error: {}", msg)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -248,5 +313,24 @@ mod tests {
         assert_eq!(SecretKind::AccessToken.as_str(), "access_token");
         assert_eq!(SecretKind::RefreshToken.as_str(), "refresh_token");
         assert_eq!(SecretKind::ApiKey.as_str(), "api_key");
+    }
+
+    #[test]
+    fn error_is_keyring_unavailable() {
+        assert!(SecretsError::Unavailable("test".into()).is_keyring_unavailable());
+        assert!(SecretsError::AccessDenied("test".into()).is_keyring_unavailable());
+        assert!(!SecretsError::NotFound { key: "test".into() }.is_keyring_unavailable());
+        assert!(!SecretsError::Other("test".into()).is_keyring_unavailable());
+    }
+
+    #[test]
+    fn error_user_messages_are_helpful() {
+        let not_found = SecretsError::NotFound {
+            key: "test_key".into(),
+        };
+        assert!(not_found.user_message().contains("tunez auth login"));
+
+        let unavailable = SecretsError::Unavailable("no dbus".into());
+        assert!(unavailable.user_message().contains("headless"));
     }
 }
