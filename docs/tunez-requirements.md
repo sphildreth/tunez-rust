@@ -40,8 +40,8 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
     - [x] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
       - [x] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
       - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
-    - [ ] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
-    - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
+    - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
+    - [x] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
     - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
     - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
 

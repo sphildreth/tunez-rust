@@ -1,5 +1,5 @@
 use std::io::stdout;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent},
@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Sparkline, Wrap},
     Frame, Terminal,
 };
 use thiserror::Error;
@@ -24,6 +24,7 @@ const MIN_HEIGHT: u16 = 18;
 const HELP_WIDTH: u16 = 80;
 const HELP_HEIGHT: u16 = 70;
 const TICK_RATE: Duration = Duration::from_millis(50);
+const VIZ_MAX_VALUE: u16 = 100;
 
 #[derive(Debug, Clone)]
 pub struct UiContext {
@@ -66,16 +67,26 @@ pub fn run_ui(context: UiContext) -> Result<(), UiError> {
     terminal.clear()?;
 
     let mut app = App::new(context.provider);
+    let mut last_tick = Instant::now();
 
     loop {
         terminal.draw(|frame| app.render(frame))?;
 
-        if event::poll(TICK_RATE)? {
+        let timeout = TICK_RATE
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or_else(|| Duration::from_millis(0));
+
+        if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if app.handle_key(key) {
                     break;
                 }
             }
+        }
+
+        if last_tick.elapsed() >= TICK_RATE {
+            app.tick();
+            last_tick = Instant::now();
         }
     }
 
@@ -88,6 +99,7 @@ struct App {
     active_tab: usize,
     show_help: bool,
     help: HelpContent,
+    visualizer: Visualizer,
 }
 
 impl App {
@@ -98,7 +110,12 @@ impl App {
             active_tab: 0,
             show_help: false,
             help: HelpContent::new(),
+            visualizer: Visualizer::new(24),
         }
+    }
+
+    fn tick(&mut self) {
+        self.visualizer.update();
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -167,7 +184,7 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Min(5),
+                Constraint::Min(7),
                 Constraint::Length(3),
             ])
             .split(area);
@@ -259,10 +276,19 @@ impl App {
         lines.push(Line::from(""));
         lines.extend(hints);
 
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(5), Constraint::Length(6)])
+            .split(area);
+
         let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+        frame.render_widget(paragraph, chunks[0]);
+
+        if matches!(tab, Tab::NowPlaying) {
+            self.render_visualizer(frame, chunks[1]);
+        }
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
@@ -278,6 +304,24 @@ impl App {
         ]))
         .block(Block::default().borders(Borders::ALL).title("Player"));
         frame.render_widget(footer, area);
+    }
+
+    fn render_visualizer(&self, frame: &mut Frame, area: Rect) {
+        if area.width < 24 || area.height < 4 {
+            let msg = Paragraph::new("Visualizer hidden (terminal too small)")
+                .block(Block::default().borders(Borders::ALL).title("Visualizer"));
+            frame.render_widget(msg, area);
+            return;
+        }
+
+        let bar_count = ((area.width.saturating_sub(2)) / 2).max(10) as usize;
+        let data = self.visualizer.bar_values(bar_count);
+        let sparkline = Sparkline::default()
+            .block(Block::default().borders(Borders::ALL).title("Visualizer"))
+            .style(Style::default().fg(Color::Cyan))
+            .max(VIZ_MAX_VALUE as u64)
+            .data(&data);
+        frame.render_widget(sparkline, area);
     }
 
     fn render_help(&self, frame: &mut Frame, area: Rect) {
@@ -361,6 +405,42 @@ impl Tab {
                 "Press ? to view the Markdown-driven help overlay.",
             )],
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Visualizer {
+    values: Vec<u16>,
+    phase: f32,
+}
+
+impl Visualizer {
+    fn new(bars: usize) -> Self {
+        Self {
+            values: vec![0; bars],
+            phase: 0.0,
+        }
+    }
+
+    fn update(&mut self) {
+        self.phase = (self.phase + 0.35) % (std::f32::consts::TAU);
+        for (i, value) in self.values.iter_mut().enumerate() {
+            let x = self.phase + i as f32 * 0.35;
+            let amplitude = ((x.sin() + 1.0) * (VIZ_MAX_VALUE as f32 / 2.0)).round();
+            *value = amplitude as u16;
+        }
+    }
+
+    fn bar_values(&self, count: usize) -> Vec<u64> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let mut data = Vec::with_capacity(count);
+        for i in 0..count {
+            let idx = i % self.values.len().max(1);
+            data.push(self.values.get(idx).copied().unwrap_or(0) as u64);
+        }
+        data
     }
 }
 
