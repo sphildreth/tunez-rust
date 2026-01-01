@@ -36,6 +36,12 @@ cargo test
 cargo run -p tunez-cli
 ```
 
+### CLI helpers (Phase 1 wiring)
+
+- List configured providers: `cargo run -p tunez-cli -- providers list`
+- Build a play request (selectors only for now):  
+  `cargo run -p tunez-cli -- play --provider <id> --track "<name>" --album "<album>" --artist "<artist>" -p`
+
 ## Running the executable (`tunez`)
 
 The runnable binary name is `tunez`.

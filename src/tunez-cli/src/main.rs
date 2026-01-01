@@ -1,15 +1,16 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use tunez_core::{init_logging, AppDirs, Config};
+use thiserror::Error;
+use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationError};
 
 #[derive(Debug, Parser)]
 #[command(name = "tunez", version, about = "Terminal music player")]
 struct Cli {
-    /// Provider override (takes precedence over config)
-    #[arg(long)]
+    /// Provider override (global so it applies to subcommands; takes precedence over config)
+    #[arg(long, global = true)]
     provider: Option<String>,
-    /// Profile override (takes precedence over config)
-    #[arg(long)]
+    /// Profile override (global so it applies to subcommands; takes precedence over config)
+    #[arg(long, global = true)]
     profile: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
@@ -17,6 +18,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Build a play request from selectors (parses only; playback coming in later phases)
+    Play(PlayCommand),
     /// Provider management commands
     #[command(subcommand)]
     Providers(ProvidersCommand),
@@ -26,6 +29,194 @@ enum Command {
 enum ProvidersCommand {
     /// List configured providers and profiles
     List,
+}
+
+#[derive(Debug, Parser, Clone)]
+struct PlayCommand {
+    /// Track filter
+    #[arg(long)]
+    track: Option<String>,
+    /// Album filter
+    #[arg(long)]
+    album: Option<String>,
+    /// Artist filter
+    #[arg(long)]
+    artist: Option<String>,
+    /// Playlist name selector
+    #[arg(long)]
+    playlist: Option<String>,
+    /// Provider-scoped stable identifier (takes precedence over other selectors)
+    #[arg(long)]
+    id: Option<String>,
+    /// Begin playback immediately after resolving selection
+    #[arg(short = 'p', long)]
+    autoplay: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlayIntent {
+    provider: ProviderSelection,
+    selector: PlaySelector,
+    autoplay: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PlaySelector {
+    Id {
+        id: String,
+    },
+    Playlist {
+        name: String,
+    },
+    TrackSearch {
+        track: String,
+        artist: Option<String>,
+        album: Option<String>,
+    },
+    AlbumSearch {
+        album: String,
+        artist: Option<String>,
+    },
+    ArtistSearch {
+        artist: String,
+    },
+}
+
+#[derive(Debug, Error)]
+enum PlaySelectorError {
+    #[error("play requires at least one selector (--id/--playlist/--track/--album/--artist)")]
+    MissingSelector,
+    #[error("playlist selector cannot be combined with track, album, or artist selectors")]
+    PlaylistConflict,
+    #[error("internal selector invariant violated: {0}")]
+    InvariantViolation(&'static str),
+    #[error("{0}")]
+    Provider(#[from] ValidationError),
+}
+
+impl PlayCommand {
+    fn into_intent(
+        self,
+        config: &Config,
+        cli_provider: Option<&str>,
+        cli_profile: Option<&str>,
+    ) -> Result<PlayIntent, PlaySelectorError> {
+        let PlayCommand {
+            track,
+            album,
+            artist,
+            playlist,
+            id,
+            autoplay,
+        } = self;
+        let selector = Self::build_selector(track, album, artist, playlist, id)?;
+        let provider = config.resolve_provider_selection(cli_provider, cli_profile)?;
+
+        Ok(PlayIntent {
+            provider,
+            selector,
+            autoplay,
+        })
+    }
+
+    #[cfg(test)]
+    fn into_selector(self) -> Result<PlaySelector, PlaySelectorError> {
+        let PlayCommand {
+            track,
+            album,
+            artist,
+            playlist,
+            id,
+            autoplay: _,
+        } = self;
+
+        Self::build_selector(track, album, artist, playlist, id)
+    }
+
+    fn build_selector(
+        track: Option<String>,
+        album: Option<String>,
+        artist: Option<String>,
+        playlist: Option<String>,
+        id: Option<String>,
+    ) -> Result<PlaySelector, PlaySelectorError> {
+        // Selector precedence: id > playlist > track > album > artist.
+        if let Some(id) = id {
+            return Ok(PlaySelector::Id { id });
+        }
+
+        let has_playlist = playlist.is_some();
+        let has_track = track.is_some();
+        let has_album = album.is_some();
+        let has_artist = artist.is_some();
+
+        if !(has_playlist || has_track || has_album || has_artist) {
+            return Err(PlaySelectorError::MissingSelector);
+        }
+
+        if has_playlist && (has_track || has_album || has_artist) {
+            return Err(PlaySelectorError::PlaylistConflict);
+        }
+
+        if let Some(name) = playlist {
+            return Ok(PlaySelector::Playlist { name });
+        }
+
+        if let Some(track) = track {
+            return Ok(PlaySelector::TrackSearch {
+                track,
+                artist,
+                album,
+            });
+        }
+
+        if let Some(album) = album {
+            return Ok(PlaySelector::AlbumSearch { album, artist });
+        }
+
+        if let Some(artist) = artist {
+            return Ok(PlaySelector::ArtistSearch { artist });
+        }
+
+        Err(PlaySelectorError::InvariantViolation(
+            "selector validation yielded no remaining selector",
+        ))
+    }
+}
+
+impl PlaySelector {
+    fn describe(&self) -> String {
+        match self {
+            PlaySelector::Id { id } => format!("id={id}"),
+            PlaySelector::Playlist { name } => format!("playlist=\"{name}\""),
+            PlaySelector::TrackSearch {
+                track,
+                artist,
+                album,
+            } => {
+                let mut parts = vec![format!("track=\"{track}\"")];
+                if let Some(artist) = Self::format_artist(artist.as_deref()) {
+                    parts.push(artist);
+                }
+                if let Some(album) = album {
+                    parts.push(format!("album=\"{album}\""));
+                }
+                parts.join(", ")
+            }
+            PlaySelector::AlbumSearch { album, artist } => {
+                let mut parts = vec![format!("album=\"{album}\"")];
+                if let Some(artist) = Self::format_artist(artist.as_deref()) {
+                    parts.push(artist);
+                }
+                parts.join(", ")
+            }
+            PlaySelector::ArtistSearch { artist } => format!("artist=\"{artist}\""),
+        }
+    }
+
+    fn format_artist(artist: Option<&str>) -> Option<String> {
+        artist.map(|name| format!("artist=\"{name}\""))
+    }
 }
 
 fn main() -> Result<()> {
@@ -39,6 +230,27 @@ fn main() -> Result<()> {
         Some(Command::Providers(ProvidersCommand::List)) => {
             print_providers(&config);
             return Ok(());
+        }
+        Some(Command::Play(play)) => {
+            let intent =
+                play.into_intent(&config, cli.provider.as_deref(), cli.profile.as_deref())?;
+            let provider_label = format!(
+                "{}{}",
+                intent.provider.provider_id,
+                intent
+                    .provider
+                    .profile
+                    .as_deref()
+                    .map(|p| format!(" (profile '{p}')"))
+                    .unwrap_or_default()
+            );
+            let selector_description = intent.selector.describe();
+            let play_summary = format!(
+                "provider '{}': {} (autoplay: {})",
+                provider_label, selector_description, intent.autoplay
+            );
+            tracing::info!("Play request: {}", play_summary);
+            println!("Play request resolved: {}", play_summary);
         }
         None => {
             let selection = config
@@ -84,5 +296,130 @@ fn print_providers(config: &Config) {
                 println!("  - {}{}", profile, marker);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use tunez_core::{ProviderConfig, ProviderProfile};
+
+    fn config_with_provider(provider_id: &str, profile: &str) -> Config {
+        let mut providers = BTreeMap::new();
+        let mut profiles = BTreeMap::new();
+        profiles.insert(profile.to_string(), ProviderProfile::default());
+        providers.insert(
+            provider_id.to_string(),
+            ProviderConfig {
+                kind: Some("filesystem".into()),
+                profiles,
+            },
+        );
+
+        let mut config = Config::default();
+        config.default_provider = Some(provider_id.to_string());
+        config.providers = providers;
+        config
+    }
+
+    #[test]
+    fn play_selector_requires_input() {
+        let play = PlayCommand {
+            track: None,
+            album: None,
+            artist: None,
+            playlist: None,
+            id: None,
+            autoplay: false,
+        };
+
+        let err = play
+            .into_selector()
+            .expect_err("selector should be required");
+        assert!(matches!(err, PlaySelectorError::MissingSelector));
+    }
+
+    #[test]
+    fn play_selector_id_takes_precedence() {
+        let play = PlayCommand {
+            track: Some("track".into()),
+            album: Some("album".into()),
+            artist: Some("artist".into()),
+            playlist: None,
+            id: Some("stable-id-123".into()),
+            autoplay: false,
+        };
+
+        let selector = play.into_selector().expect("id should be accepted");
+        assert_eq!(
+            selector,
+            PlaySelector::Id {
+                id: "stable-id-123".into()
+            }
+        );
+    }
+
+    #[test]
+    fn play_selector_tracks_allow_filters() {
+        let play = PlayCommand {
+            track: Some("track".into()),
+            album: Some("album".into()),
+            artist: Some("artist".into()),
+            playlist: None,
+            id: None,
+            autoplay: true,
+        };
+
+        let selector = play
+            .into_selector()
+            .expect("track selector should be valid");
+        assert_eq!(
+            selector,
+            PlaySelector::TrackSearch {
+                track: "track".into(),
+                artist: Some("artist".into()),
+                album: Some("album".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn play_selector_playlist_conflict() {
+        let play = PlayCommand {
+            track: Some("track".into()),
+            album: None,
+            artist: None,
+            playlist: Some("mix".into()),
+            id: None,
+            autoplay: false,
+        };
+
+        let err = play
+            .into_selector()
+            .expect_err("conflicting playlist selector");
+        assert!(matches!(err, PlaySelectorError::PlaylistConflict));
+    }
+
+    #[test]
+    fn play_intent_resolves_provider_selection() {
+        let config = config_with_provider("filesystem", "home");
+        let play = PlayCommand {
+            track: Some("song".into()),
+            album: None,
+            artist: None,
+            playlist: None,
+            id: None,
+            autoplay: true,
+        };
+
+        let intent = play
+            .into_intent(&config, Some("filesystem"), Some("home"))
+            .expect("intent should resolve");
+
+        assert_eq!(intent.provider.provider_id, "filesystem");
+        assert_eq!(intent.provider.profile.as_deref(), Some("home"));
+        assert_eq!(intent.selector.describe(), "track=\"song\"");
+        assert!(intent.autoplay);
     }
 }
