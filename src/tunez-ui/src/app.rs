@@ -100,10 +100,12 @@ struct App {
     show_help: bool,
     help: HelpContent,
     visualizer: Visualizer,
+    use_color: bool,
 }
 
 impl App {
     fn new(provider: ProviderSelection) -> Self {
+        let use_color = std::env::var("NO_COLOR").is_err();
         Self {
             provider,
             tabs: Tab::all(),
@@ -111,11 +113,20 @@ impl App {
             show_help: false,
             help: HelpContent::new(),
             visualizer: Visualizer::new(24),
+            use_color,
         }
     }
 
     fn tick(&mut self) {
         self.visualizer.update();
+    }
+
+    fn style_fg(&self, color: Color) -> Style {
+        if self.use_color {
+            Style::default().fg(color)
+        } else {
+            Style::default()
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -211,13 +222,11 @@ impl App {
         let status = Line::from(vec![
             Span::styled(
                 "Tunez ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
             Span::raw("▸ "),
-            Span::styled(provider, Style::default().fg(Color::Green)),
-            Span::raw("  Net: OK  Scrobble: OFF"),
+            Span::styled(provider, self.style_fg(Color::Green)),
+            Span::raw("  Net: OK  Scrobble: OFF (text labels shown for accessibility)"),
         ]);
 
         let paragraph = Paragraph::new(status)
@@ -244,12 +253,14 @@ impl App {
             .collect();
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title("Tabs"))
-            .highlight_style(
+            .highlight_style(if self.use_color {
                 Style::default()
                     .bg(Color::DarkGray)
                     .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().add_modifier(Modifier::BOLD)
+            })
             .highlight_symbol("▸ ");
         let mut state = ratatui::widgets::ListState::default();
         state.select(Some(self.active_tab));
@@ -267,9 +278,7 @@ impl App {
         let mut lines = Vec::new();
         lines.push(Line::from(Span::styled(
             title,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));
         lines.extend(description);
@@ -296,9 +305,7 @@ impl App {
             Span::raw("⏵  "),
             Span::styled(
                 "Not playing",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::DIM),
+                self.style_fg(Color::Yellow).add_modifier(Modifier::DIM),
             ),
             Span::raw("   ▓▓▓▓░░░░░░  Vol: 72%  Rep:Off"),
         ]))
@@ -316,9 +323,14 @@ impl App {
 
         let bar_count = ((area.width.saturating_sub(2)) / 2).max(10) as usize;
         let data = self.visualizer.bar_values(bar_count);
+        let viz_style = if self.use_color {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
         let sparkline = Sparkline::default()
             .block(Block::default().borders(Borders::ALL).title("Visualizer"))
-            .style(Style::default().fg(Color::Cyan))
+            .style(viz_style)
             .max(VIZ_MAX_VALUE as u64)
             .data(&data);
         frame.render_widget(sparkline, area);

@@ -26,6 +26,7 @@ Tunez is a fast, keyboard-first terminal music player with a modular “Provider
 - Spectrum/waveform visualization (at least a spectrum analyzer)
 - Cross-platform terminal behavior (Linux/macOS/Windows)
 - Modular from day 1: built-in Providers (Phase 1), future-proof for external plugins (Phase 2)
+- Accessibility/monochrome friendly: honors `NO_COLOR`, avoids color-only meaning, shows text labels for status.
 
 ## Getting started (current scaffold)
 
@@ -73,11 +74,14 @@ cargo install --path src/tunez-cli
 tunez
 ```
 
-## Workspace layout (in progress)
+## Workspace layout
 
-- `src/tunez-core/` — shared utilities (config loading, logging bootstrap, app paths)
+- `src/tunez-core/` — shared domain (config, paths, provider/scrobbler traits, contract tests)
 - `src/tunez-cli/` — binary entrypoint (`tunez`)
-- Planned: `src/tunez-ui/`, `src/tunez-player/`, `src/tunez-audio/`, `src/tunez-viz/`, `src/providers/` (see PRD)
+- `src/tunez-ui/` — ratatui UI shell
+- `src/tunez-player/` — queue + playback state machine
+- `src/tunez-audio/` — audio engine wiring
+- `src/providers/` — built-in providers (filesystem, melodee)
 
 ## Configuration
 
