@@ -1,7 +1,7 @@
 mod scan;
 mod tags;
 
-use scan::{scan_library, LibraryIndex};
+use scan::{scan_library_with_options, LibraryIndex, ScanOptions};
 use std::sync::{Arc, RwLock};
 use tunez_core::models::{
     Album, AlbumId, Page, PageCursor, PageRequest, Playlist, PlaylistId, StreamUrl, Track, TrackId,
@@ -16,21 +16,42 @@ pub struct FilesystemProvider {
     id: String,
     name: String,
     index: Arc<RwLock<LibraryIndex>>,
+    capabilities: Arc<RwLock<ProviderCapabilities>>,
+    roots: Vec<String>,
+    options: ScanOptions,
 }
 
 impl FilesystemProvider {
     pub fn new(roots: Vec<String>) -> Result<Self, ProviderError> {
-        let index = scan_library(roots)?;
+        Self::with_options(roots, ScanOptions::default())
+    }
+
+    pub fn with_options(roots: Vec<String>, options: ScanOptions) -> Result<Self, ProviderError> {
+        let index = scan_library_with_options(roots.clone(), options.clone())?;
+        let caps = Self::capabilities_from_index(&index);
         Ok(Self {
             id: "filesystem".into(),
             name: "Filesystem".into(),
             index: Arc::new(RwLock::new(index)),
+            capabilities: Arc::new(RwLock::new(caps)),
+            roots,
+            options,
         })
     }
 
-    fn caps() -> ProviderCapabilities {
+    pub fn rescan(&self) -> Result<(), ProviderError> {
+        let new_index = scan_library_with_options(self.roots.clone(), self.options.clone())?;
+        let mut guard = self.index.write().expect("index poisoned");
+        *guard = new_index;
+        let caps = Self::capabilities_from_index(&guard);
+        let mut caps_guard = self.capabilities.write().expect("capabilities poisoned");
+        *caps_guard = caps;
+        Ok(())
+    }
+
+    fn capabilities_from_index(index: &LibraryIndex) -> ProviderCapabilities {
         ProviderCapabilities {
-            playlists: false,
+            playlists: !index.playlists.is_empty(),
             lyrics: false,
             artwork: false,
             favorites: false,
@@ -50,7 +71,7 @@ impl Provider for FilesystemProvider {
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
-        Self::caps()
+        *self.capabilities.read().expect("capabilities poisoned")
     }
 
     fn search_tracks(
@@ -152,36 +173,117 @@ impl Provider for FilesystemProvider {
         }
     }
 
-    fn list_playlists(&self, _paging: PageRequest) -> ProviderResult<Page<Playlist>> {
-        Err(ProviderError::NotSupported {
-            operation: "list_playlists".into(),
-        })
+    fn list_playlists(&self, paging: PageRequest) -> ProviderResult<Page<Playlist>> {
+        if !self.capabilities().supports_playlists() {
+            return Err(ProviderError::NotSupported {
+                operation: "list_playlists".into(),
+            });
+        }
+        let index = self.index.read().expect("index poisoned");
+        let mut items: Vec<Playlist> = index
+            .playlists
+            .values()
+            .map(|p| p.playlist.clone())
+            .collect();
+        items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.0.cmp(&b.id.0)));
+        let start = paging.offset as usize;
+        let end = start.saturating_add(paging.limit as usize);
+        let next = if end < items.len() {
+            Some(PageCursor(end.to_string()))
+        } else {
+            None
+        };
+        let slice = items
+            .into_iter()
+            .skip(start)
+            .take(paging.limit as usize)
+            .collect();
+        Ok(Page { items: slice, next })
     }
 
-    fn search_playlists(
-        &self,
-        _query: &str,
-        _paging: PageRequest,
-    ) -> ProviderResult<Page<Playlist>> {
-        Err(ProviderError::NotSupported {
-            operation: "search_playlists".into(),
-        })
+    fn search_playlists(&self, query: &str, paging: PageRequest) -> ProviderResult<Page<Playlist>> {
+        if !self.capabilities().supports_playlists() {
+            return Err(ProviderError::NotSupported {
+                operation: "search_playlists".into(),
+            });
+        }
+        let index = self.index.read().expect("index poisoned");
+        let q = query.to_ascii_lowercase();
+        let mut items: Vec<Playlist> = index
+            .playlists
+            .values()
+            .filter(|p| p.playlist.name.to_ascii_lowercase().contains(&q))
+            .map(|p| p.playlist.clone())
+            .collect();
+        items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.0.cmp(&b.id.0)));
+        let start = paging.offset as usize;
+        let end = start.saturating_add(paging.limit as usize);
+        let next = if end < items.len() {
+            Some(PageCursor(end.to_string()))
+        } else {
+            None
+        };
+        let slice = items
+            .into_iter()
+            .skip(start)
+            .take(paging.limit as usize)
+            .collect();
+        Ok(Page { items: slice, next })
     }
 
-    fn get_playlist(&self, _playlist_id: &PlaylistId) -> ProviderResult<Playlist> {
-        Err(ProviderError::NotSupported {
-            operation: "get_playlist".into(),
-        })
+    fn get_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<Playlist> {
+        if !self.capabilities().supports_playlists() {
+            return Err(ProviderError::NotSupported {
+                operation: "get_playlist".into(),
+            });
+        }
+        let index = self.index.read().expect("index poisoned");
+        let entry = index
+            .playlists
+            .get(playlist_id)
+            .ok_or(ProviderError::NotFound {
+                entity: playlist_id.0.clone(),
+            })?;
+        Ok(entry.playlist.clone())
     }
 
     fn list_playlist_tracks(
         &self,
-        _playlist_id: &PlaylistId,
-        _paging: PageRequest,
+        playlist_id: &PlaylistId,
+        paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
-        Err(ProviderError::NotSupported {
-            operation: "list_playlist_tracks".into(),
-        })
+        if !self.capabilities().supports_playlists() {
+            return Err(ProviderError::NotSupported {
+                operation: "list_playlist_tracks".into(),
+            });
+        }
+        let index = self.index.read().expect("index poisoned");
+        let entry = index
+            .playlists
+            .get(playlist_id)
+            .ok_or(ProviderError::NotFound {
+                entity: playlist_id.0.clone(),
+            })?;
+        let mut tracks: Vec<Track> = entry
+            .track_ids
+            .iter()
+            .filter_map(|id| index.tracks.iter().find(|t| &t.id == id))
+            .cloned()
+            .collect();
+        tracks.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.0.cmp(&b.id.0)));
+        let start = paging.offset as usize;
+        let end = start.saturating_add(paging.limit as usize);
+        let next = if end < tracks.len() {
+            Some(PageCursor(end.to_string()))
+        } else {
+            None
+        };
+        let slice = tracks
+            .into_iter()
+            .skip(start)
+            .take(paging.limit as usize)
+            .collect();
+        Ok(Page { items: slice, next })
     }
 
     fn get_album(&self, album_id: &AlbumId) -> ProviderResult<Album> {
@@ -260,6 +362,10 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
+    use tunez_core::models::TrackId;
+    use tunez_core::provider_contract::{
+        run_provider_contract, ProviderContractExpectations, SearchExpectation,
+    };
 
     #[test]
     fn search_returns_tracks() {
@@ -278,5 +384,35 @@ mod tests {
             )
             .unwrap();
         assert!(!page.items.is_empty());
+    }
+
+    #[test]
+    fn provider_contract_passes() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("contract.mp3");
+        let mut f = File::create(&file_path).unwrap();
+        writeln!(f, "fake").unwrap();
+        let provider =
+            FilesystemProvider::new(vec![dir.path().to_string_lossy().to_string()]).unwrap();
+        let track_id = TrackId::new(
+            file_path
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let expectations = ProviderContractExpectations {
+            provider_id: "filesystem".into(),
+            search: SearchExpectation {
+                query: "contract".into(),
+                filters: TrackSearchFilters::default(),
+                expected_first_track_id: track_id.clone(),
+            },
+            stream_track_id: track_id,
+            playlist: None,
+        };
+
+        run_provider_contract(&provider, &expectations).unwrap();
     }
 }

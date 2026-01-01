@@ -1322,12 +1322,10 @@ dependencies = [
 name = "melodee-provider"
 version = "0.1.0"
 dependencies = [
- "futures",
  "reqwest",
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 1.0.69",
  "tokio",
  "tunez-core",
  "url",

@@ -1,13 +1,12 @@
 mod mapping;
 pub mod models;
 
-use futures::executor::block_on;
 use mapping::{map_album, map_playlist, map_track};
-use reqwest::Client;
-use std::sync::Arc;
+use reqwest::blocking::{Client, Response};
+use reqwest::StatusCode;
+use serde::de::DeserializeOwned;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use thiserror::Error;
-use tokio::sync::RwLock;
 use tunez_core::models::{
     Album, AlbumId, Page, PageRequest, Playlist, PlaylistId, StreamUrl, Track, TrackId,
 };
@@ -21,12 +20,6 @@ use url::Url;
 pub struct MelodeeConfig {
     pub base_url: String,
     pub access_token: Option<String>,
-}
-
-#[derive(Debug, Error)]
-pub enum MelodeeAuthError {
-    #[error("authentication error: {0}")]
-    Auth(String),
 }
 
 #[derive(Clone)]
@@ -60,7 +53,10 @@ impl MelodeeProvider {
     }
 
     fn auth_header(&self) -> Option<String> {
-        block_on(async { self.access_token.read().await.clone() })
+        self.access_token
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     fn capabilities() -> ProviderCapabilities {
@@ -72,6 +68,64 @@ impl MelodeeProvider {
             recently_played: false,
             offline_download: false,
         }
+    }
+
+    fn paging_query(&self, paging: PageRequest) -> Vec<(&str, String)> {
+        vec![
+            ("page", (paging.offset / paging.limit).to_string()),
+            ("pageSize", paging.limit.to_string()),
+        ]
+    }
+
+    fn send_get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: Vec<(&str, String)>,
+        not_found_entity: Option<String>,
+    ) -> ProviderResult<T> {
+        let url = self.base_url.join(path).map_err(|e| ProviderError::Other {
+            message: e.to_string(),
+        })?;
+        let mut request = self.client.get(url.clone()).query(&query);
+        if let Some(token) = self.auth_header() {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().map_err(|e| ProviderError::NetworkError {
+            message: e.to_string(),
+        })?;
+        let response = Self::map_response(response, path, not_found_entity)?;
+        response.json::<T>().map_err(|e| ProviderError::Other {
+            message: e.to_string(),
+        })
+    }
+
+    fn map_response(
+        response: Response,
+        path: &str,
+        not_found_entity: Option<String>,
+    ) -> ProviderResult<Response> {
+        match response.status() {
+            StatusCode::UNAUTHORIZED => Err(ProviderError::AuthenticationError {
+                message: "unauthorized".into(),
+            }),
+            StatusCode::NOT_FOUND => Err(ProviderError::NotFound {
+                entity: not_found_entity.unwrap_or_else(|| path.to_string()),
+            }),
+            status if status.is_client_error() || status.is_server_error() => {
+                Err(ProviderError::Other {
+                    message: format!("http {} from {}", status, path),
+                })
+            }
+            _ => Ok(response),
+        }
+    }
+
+    fn fetch_song(&self, track_id: &TrackId) -> ProviderResult<models::Song> {
+        self.send_get(
+            &format!("api/v1/songs/{}", track_id.0),
+            Vec::new(),
+            Some(track_id.0.clone()),
+        )
     }
 }
 
@@ -91,40 +145,19 @@ impl Provider for MelodeeProvider {
     fn search_tracks(
         &self,
         query: &str,
-        _filters: TrackSearchFilters,
+        filters: TrackSearchFilters,
         paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
-        let url = self
-            .base_url
-            .join(&format!("api/v1/search/songs?q={}", query))
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .query(&[
-                    ("page", paging.offset / paging.limit),
-                    ("pageSize", paging.limit),
-                ])
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ProviderError::AuthenticationError {
-                message: "unauthorized".into(),
-            });
+        let mut query_params = vec![
+            ("q", query.to_string()),
+            ("page", (paging.offset / paging.limit).to_string()),
+            ("pageSize", paging.limit.to_string()),
+        ];
+        if let Some(artist) = filters.artist {
+            query_params.push(("filterByArtistApiKey", artist));
         }
-        let body: models::SongPagedResponse = futures::executor::block_on(async {
-            resp.json().await
-        })
-        .map_err(|e| ProviderError::Other {
-            message: e.to_string(),
-        })?;
+        let body: models::SongPagedResponse =
+            self.send_get("api/v1/search/songs", query_params, None)?;
         let items: Vec<Track> = body
             .data
             .into_iter()
@@ -143,37 +176,8 @@ impl Provider for MelodeeProvider {
                 operation: "browse".into(),
             }),
             BrowseKind::Albums => {
-                let url =
-                    self.base_url
-                        .join("api/v1/albums")
-                        .map_err(|e| ProviderError::Other {
-                            message: e.to_string(),
-                        })?;
-                let resp = futures::executor::block_on(async {
-                    self.client
-                        .get(url)
-                        .query(&[
-                            ("page", paging.offset / paging.limit),
-                            ("pageSize", paging.limit),
-                        ])
-                        .bearer_auth(self.auth_header().unwrap_or_default())
-                        .send()
-                        .await
-                })
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
-                if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                    return Err(ProviderError::AuthenticationError {
-                        message: "unauthorized".into(),
-                    });
-                }
-                let body: models::AlbumPagedResponse = futures::executor::block_on(async {
-                    resp.json().await
-                })
-                .map_err(|e| ProviderError::Other {
-                    message: e.to_string(),
-                })?;
+                let body: models::AlbumPagedResponse =
+                    self.send_get("api/v1/albums", self.paging_query(paging), None)?;
                 let items = body
                     .data
                     .into_iter()
@@ -182,36 +186,14 @@ impl Provider for MelodeeProvider {
                 Ok(Page { items, next: None })
             }
             BrowseKind::Playlists => {
-                let url = self.base_url.join("api/v1/user/playlists").map_err(|e| {
-                    ProviderError::Other {
-                        message: e.to_string(),
-                    }
-                })?;
-                let resp = futures::executor::block_on(async {
-                    self.client
-                        .get(url)
-                        .query(&[
-                            ("page", paging.offset / paging.limit),
-                            ("limit", paging.limit),
-                        ])
-                        .bearer_auth(self.auth_header().unwrap_or_default())
-                        .send()
-                        .await
-                })
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
-                if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                    return Err(ProviderError::AuthenticationError {
-                        message: "unauthorized".into(),
-                    });
-                }
-                let body: models::PlaylistPagedResponse = futures::executor::block_on(async {
-                    resp.json().await
-                })
-                .map_err(|e| ProviderError::Other {
-                    message: e.to_string(),
-                })?;
+                let body: models::PlaylistPagedResponse = self.send_get(
+                    "api/v1/user/playlists",
+                    vec![
+                        ("page", (paging.offset / paging.limit).to_string()),
+                        ("limit", paging.limit.to_string()),
+                    ],
+                    None,
+                )?;
                 let items = body
                     .data
                     .into_iter()
@@ -223,37 +205,14 @@ impl Provider for MelodeeProvider {
     }
 
     fn list_playlists(&self, paging: PageRequest) -> ProviderResult<Page<Playlist>> {
-        let url =
-            self.base_url
-                .join("api/v1/user/playlists")
-                .map_err(|e| ProviderError::Other {
-                    message: e.to_string(),
-                })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .query(&[
-                    ("page", paging.offset / paging.limit),
-                    ("limit", paging.limit),
-                ])
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ProviderError::AuthenticationError {
-                message: "unauthorized".into(),
-            });
-        }
-        let body: models::PlaylistPagedResponse = futures::executor::block_on(async {
-            resp.json().await
-        })
-        .map_err(|e| ProviderError::Other {
-            message: e.to_string(),
-        })?;
+        let body: models::PlaylistPagedResponse = self.send_get(
+            "api/v1/user/playlists",
+            vec![
+                ("page", (paging.offset / paging.limit).to_string()),
+                ("limit", paging.limit.to_string()),
+            ],
+            None,
+        )?;
         let items = body
             .data
             .into_iter()
@@ -280,39 +239,11 @@ impl Provider for MelodeeProvider {
     }
 
     fn get_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<Playlist> {
-        let url = self
-            .base_url
-            .join(&format!("api/v1/playlists/{}", playlist_id.0))
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        match resp.status() {
-            reqwest::StatusCode::UNAUTHORIZED => {
-                return Err(ProviderError::AuthenticationError {
-                    message: "unauthorized".into(),
-                })
-            }
-            reqwest::StatusCode::NOT_FOUND => {
-                return Err(ProviderError::NotFound {
-                    entity: playlist_id.0.clone(),
-                })
-            }
-            _ => {}
-        }
-        let playlist: models::Playlist = futures::executor::block_on(async { resp.json().await })
-            .map_err(|e| ProviderError::Other {
-            message: e.to_string(),
-        })?;
+        let playlist: models::Playlist = self.send_get(
+            &format!("api/v1/playlists/{}", playlist_id.0),
+            Vec::new(),
+            Some(playlist_id.0.clone()),
+        )?;
         Ok(map_playlist(&playlist, &self.id))
     }
 
@@ -321,45 +252,11 @@ impl Provider for MelodeeProvider {
         playlist_id: &PlaylistId,
         paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
-        let url = self
-            .base_url
-            .join(&format!("api/v1/playlists/{}/songs", playlist_id.0))
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .query(&[
-                    ("page", paging.offset / paging.limit),
-                    ("pageSize", paging.limit),
-                ])
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        match resp.status() {
-            reqwest::StatusCode::UNAUTHORIZED => {
-                return Err(ProviderError::AuthenticationError {
-                    message: "unauthorized".into(),
-                })
-            }
-            reqwest::StatusCode::NOT_FOUND => {
-                return Err(ProviderError::NotFound {
-                    entity: playlist_id.0.clone(),
-                })
-            }
-            _ => {}
-        }
-        let body: models::SongPagedResponse = futures::executor::block_on(async {
-            resp.json().await
-        })
-        .map_err(|e| ProviderError::Other {
-            message: e.to_string(),
-        })?;
+        let body: models::SongPagedResponse = self.send_get(
+            &format!("api/v1/playlists/{}/songs", playlist_id.0),
+            self.paging_query(paging),
+            Some(playlist_id.0.clone()),
+        )?;
         let items = body
             .data
             .into_iter()
@@ -369,39 +266,11 @@ impl Provider for MelodeeProvider {
     }
 
     fn get_album(&self, album_id: &AlbumId) -> ProviderResult<Album> {
-        let url = self
-            .base_url
-            .join(&format!("api/v1/albums/{}", album_id.0))
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        match resp.status() {
-            reqwest::StatusCode::UNAUTHORIZED => {
-                return Err(ProviderError::AuthenticationError {
-                    message: "unauthorized".into(),
-                })
-            }
-            reqwest::StatusCode::NOT_FOUND => {
-                return Err(ProviderError::NotFound {
-                    entity: album_id.0.clone(),
-                })
-            }
-            _ => {}
-        }
-        let album: models::Album = futures::executor::block_on(async { resp.json().await })
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
+        let album: models::Album = self.send_get(
+            &format!("api/v1/albums/{}", album_id.0),
+            Vec::new(),
+            Some(album_id.0.clone()),
+        )?;
         Ok(map_album(&album, &self.id))
     }
 
@@ -410,45 +279,11 @@ impl Provider for MelodeeProvider {
         album_id: &AlbumId,
         paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
-        let url = self
-            .base_url
-            .join(&format!("api/v1/albums/{}/songs", album_id.0))
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .query(&[
-                    ("page", paging.offset / paging.limit),
-                    ("pageSize", paging.limit),
-                ])
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        match resp.status() {
-            reqwest::StatusCode::UNAUTHORIZED => {
-                return Err(ProviderError::AuthenticationError {
-                    message: "unauthorized".into(),
-                })
-            }
-            reqwest::StatusCode::NOT_FOUND => {
-                return Err(ProviderError::NotFound {
-                    entity: album_id.0.clone(),
-                })
-            }
-            _ => {}
-        }
-        let body: models::SongPagedResponse = futures::executor::block_on(async {
-            resp.json().await
-        })
-        .map_err(|e| ProviderError::Other {
-            message: e.to_string(),
-        })?;
+        let body: models::SongPagedResponse = self.send_get(
+            &format!("api/v1/albums/{}/songs", album_id.0),
+            self.paging_query(paging),
+            Some(album_id.0.clone()),
+        )?;
         let items = body
             .data
             .into_iter()
@@ -458,53 +293,121 @@ impl Provider for MelodeeProvider {
     }
 
     fn get_track(&self, track_id: &TrackId) -> ProviderResult<Track> {
-        let url = self
-            .base_url
-            .join(&format!("api/v1/songs/{}", track_id.0))
-            .map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
-        let resp = futures::executor::block_on(async {
-            self.client
-                .get(url)
-                .bearer_auth(self.auth_header().unwrap_or_default())
-                .send()
-                .await
-        })
-        .map_err(|e| ProviderError::NetworkError {
-            message: e.to_string(),
-        })?;
-        match resp.status() {
-            reqwest::StatusCode::UNAUTHORIZED => {
-                return Err(ProviderError::AuthenticationError {
-                    message: "unauthorized".into(),
-                })
-            }
-            reqwest::StatusCode::NOT_FOUND => {
-                return Err(ProviderError::NotFound {
-                    entity: track_id.0.clone(),
-                })
-            }
-            _ => {}
-        }
-        let song: models::Song =
-            futures::executor::block_on(async { resp.json().await }).map_err(|e| {
-                ProviderError::Other {
-                    message: e.to_string(),
-                }
-            })?;
+        let song = self.fetch_song(track_id)?;
         Ok(map_track(&song, &self.id))
     }
 
     fn get_stream_url(&self, track_id: &TrackId) -> ProviderResult<StreamUrl> {
-        let song = self.get_track(track_id).map_err(|e| ProviderError::Other {
-            message: e.to_string(),
-        })?;
-        if song.id != *track_id {
+        let song = self.fetch_song(track_id)?;
+        if song.id != track_id.0 {
             return Err(ProviderError::Other {
                 message: "track id mismatch".into(),
             });
         }
-        Ok(StreamUrl(song.id.0.clone()))
+        let raw_url = song
+            .stream_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ProviderError::Other {
+                message: format!("missing stream url for track {}", track_id.0),
+            })?;
+        let resolved = Url::parse(raw_url)
+            .or_else(|_| self.base_url.join(raw_url))
+            .map_err(|e| ProviderError::Other {
+                message: format!("invalid stream url: {e}"),
+            })?;
+        Ok(StreamUrl::new(resolved.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tunez_core::provider_contract::{
+        run_provider_contract, PlaylistExpectation, ProviderContractExpectations, SearchExpectation,
+    };
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn provider_contract_passes_against_mock() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let server = rt.block_on(MockServer::start());
+        let base_url = format!("{}/", server.uri());
+
+        rt.block_on(
+            Mock::given(method("GET"))
+                .and(path("/api/v1/search/songs"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "data": [
+                        {
+                            "id": "song-1",
+                            "title": "Test Song",
+                            "durationMs": 180000,
+                            "streamUrl": "/stream/song-1",
+                            "artist": { "id": "artist-1", "name": "Artist" },
+                            "album": { "id": "album-1", "name": "Album" }
+                        }
+                    ],
+                    "meta": { "totalCount": 1, "pageSize": 1, "currentPage": 1 }
+                })))
+                .mount(&server),
+        );
+
+        rt.block_on(
+            Mock::given(method("GET"))
+                .and(path("/api/v1/songs/song-1"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "id": "song-1",
+                    "title": "Test Song",
+                    "durationMs": 180000,
+                    "streamUrl": "/stream/song-1",
+                    "artist": { "id": "artist-1", "name": "Artist" },
+                    "album": { "id": "album-1", "name": "Album" }
+                })))
+                .mount(&server),
+        );
+
+        rt.block_on(
+            Mock::given(method("GET"))
+                .and(path("/api/v1/user/playlists"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "data": [
+                        {
+                            "apiKey": "playlist-1",
+                            "name": "Morning Mix",
+                            "description": "Desc",
+                            "songsCount": 1
+                        }
+                    ],
+                    "meta": { "totalCount": 1, "pageSize": 1, "currentPage": 1 }
+                })))
+                .mount(&server),
+        );
+
+        let provider = MelodeeProvider::new(MelodeeConfig {
+            base_url,
+            access_token: None,
+        })
+        .expect("provider constructed");
+
+        let track_id = TrackId::new("song-1");
+        let expectations = ProviderContractExpectations {
+            provider_id: "melodee".into(),
+            search: SearchExpectation {
+                query: "test".into(),
+                filters: TrackSearchFilters::default(),
+                expected_first_track_id: track_id.clone(),
+            },
+            stream_track_id: track_id.clone(),
+            playlist: Some(PlaylistExpectation {
+                playlist_id: PlaylistId::new("playlist-1"),
+                search_query: Some("Mix".into()),
+            }),
+        };
+
+        run_provider_contract(&provider, &expectations).unwrap();
     }
 }

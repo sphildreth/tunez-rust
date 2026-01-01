@@ -54,7 +54,7 @@ impl From<String> for AlbumId {
 }
 
 /// A provider-scoped playlist identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct PlaylistId(pub String);
 
 impl PlaylistId {
@@ -108,6 +108,18 @@ pub struct Playlist {
     pub name: String,
     pub description: Option<String>,
     pub track_count: Option<u32>,
+}
+
+impl Default for Playlist {
+    fn default() -> Self {
+        Self {
+            id: PlaylistId::new(""),
+            provider_id: String::new(),
+            name: String::new(),
+            description: None,
+            track_count: None,
+        }
+    }
 }
 
 /// Stream URL returned by a provider. Providers MUST return a URL/handle; Tunez

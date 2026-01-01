@@ -1,8 +1,9 @@
 use crate::tags::parse_tags;
 use path_clean::PathClean;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
-use tunez_core::models::{Album, AlbumId, Track, TrackId};
+use tunez_core::models::{Album, AlbumId, Playlist, PlaylistId, Track, TrackId};
 use tunez_core::provider::{ProviderError, ProviderResult};
 use walkdir::WalkDir;
 
@@ -11,6 +12,36 @@ pub struct LibraryIndex {
     pub tracks: Vec<Track>,
     pub albums: BTreeMap<AlbumId, Album>,
     pub artists: BTreeSet<String>,
+    pub playlists: BTreeMap<PlaylistId, PlaylistEntry>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PlaylistEntry {
+    pub playlist: Playlist,
+    pub track_ids: Vec<TrackId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanOptions {
+    pub follow_symlinks: bool,
+    pub excluded_paths: Vec<PathBuf>,
+    pub extensions_allowlist: Vec<String>,
+}
+
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self {
+            follow_symlinks: false,
+            excluded_paths: Vec::new(),
+            extensions_allowlist: vec![
+                "mp3".into(),
+                "m4a".into(),
+                "flac".into(),
+                "wav".into(),
+                "ogg".into(),
+            ],
+        }
+    }
 }
 
 pub fn album_id_for(artist: &str, album: &str) -> AlbumId {
@@ -30,19 +61,34 @@ fn canonicalize_within_root(path: &Path, root: &Path) -> Option<PathBuf> {
 }
 
 pub fn scan_library(roots: Vec<String>) -> ProviderResult<LibraryIndex> {
+    scan_library_with_options(roots, ScanOptions::default())
+}
+
+pub fn scan_library_with_options(
+    roots: Vec<String>,
+    opts: ScanOptions,
+) -> ProviderResult<LibraryIndex> {
     let mut index = LibraryIndex::default();
     for root in roots {
         let root_path = PathBuf::from(root.clone());
-        for entry in WalkDir::new(&root_path).follow_links(false) {
-            let entry = entry.map_err(|e| ProviderError::Other {
-                message: e.to_string(),
-            })?;
+        for entry in WalkDir::new(&root_path).follow_links(opts.follow_symlinks) {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_e) => {
+                    continue;
+                }
+            };
             if !entry.file_type().is_file() {
                 continue;
             }
             let path = entry.path();
+
+            if opts.excluded_paths.iter().any(|p| path.starts_with(p)) {
+                continue;
+            }
+
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                if is_supported_extension(ext) {
+                if is_supported_extension(ext, &opts.extensions_allowlist) {
                     if let Some(track) = parse_track(path, &root_path)? {
                         index.artists.insert(track.artist.clone());
                         if let Some(album_title) = &track.album {
@@ -61,6 +107,10 @@ pub fn scan_library(roots: Vec<String>) -> ProviderResult<LibraryIndex> {
                         }
                         index.tracks.push(track);
                     }
+                } else if is_playlist_extension(ext) {
+                    if let Some(rel) = path.strip_prefix(&root_path).ok().and_then(|p| p.to_str()) {
+                        load_m3u_playlist(&mut index, path, rel, &root_path, &opts)?;
+                    }
                 }
             }
         }
@@ -71,11 +121,13 @@ pub fn scan_library(roots: Vec<String>) -> ProviderResult<LibraryIndex> {
     Ok(index)
 }
 
-fn is_supported_extension(ext: &str) -> bool {
-    matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "mp3" | "m4a" | "flac" | "wav" | "ogg"
-    )
+fn is_supported_extension(ext: &str, allowlist: &[String]) -> bool {
+    let lowered = ext.to_ascii_lowercase();
+    allowlist.iter().any(|allowed| allowed == &lowered)
+}
+
+fn is_playlist_extension(ext: &str) -> bool {
+    matches!(ext.to_ascii_lowercase().as_str(), "m3u" | "m3u8")
 }
 
 fn parse_track(path: &Path, root: &Path) -> ProviderResult<Option<Track>> {
@@ -90,7 +142,7 @@ fn parse_track(path: &Path, root: &Path) -> ProviderResult<Option<Track>> {
             message: e.to_string(),
         })?;
     let mut components = relative.components().collect::<Vec<_>>();
-    let _ = components.pop(); // drop file name
+    let _ = components.pop();
     let (inferred_artist, inferred_album) = if components.len() >= 2 {
         let album_component = components
             .pop()
@@ -134,4 +186,58 @@ fn parse_track(path: &Path, root: &Path) -> ProviderResult<Option<Track>> {
         track_number: tags.track_number,
     };
     Ok(Some(track))
+}
+
+fn load_m3u_playlist(
+    index: &mut LibraryIndex,
+    path: &Path,
+    rel_path: &str,
+    root: &Path,
+    opts: &ScanOptions,
+) -> ProviderResult<()> {
+    let playlist_id = PlaylistId::new(rel_path);
+    let playlist = Playlist {
+        id: playlist_id.clone(),
+        provider_id: "filesystem".into(),
+        name: rel_path.to_string(),
+        description: None,
+        track_count: None,
+    };
+
+    let contents = fs::read_to_string(path).map_err(|e| ProviderError::Other {
+        message: e.to_string(),
+    })?;
+    let mut track_ids = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let candidate = if Path::new(trimmed).is_absolute() {
+            PathBuf::from(trimmed)
+        } else {
+            root.join(trimmed)
+        };
+        if let Some(canonical) = canonicalize_within_root(&candidate, root) {
+            if opts.extensions_allowlist.iter().any(|ext| {
+                candidate
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|e| e.eq_ignore_ascii_case(ext))
+                    .unwrap_or(false)
+            }) {
+                track_ids.push(TrackId::new(canonical.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    index.playlists.insert(
+        playlist_id,
+        PlaylistEntry {
+            playlist,
+            track_ids,
+        },
+    );
+
+    Ok(())
 }

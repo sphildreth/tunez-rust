@@ -8,13 +8,11 @@ publish = false
 [dependencies]
 serde = { workspace = true }
 serde_json = "1"
-thiserror = { workspace = true }
-reqwest = { version = "0.11", features = ["json", "gzip", "brotli", "deflate"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-futures = "0.3"
+reqwest = { version = "0.11", features = ["blocking", "json", "gzip", "brotli", "deflate"] }
 url = "2"
 tunez-core = { path = "../../tunez-core" }
 
 [dev-dependencies]
 wiremock = "0.5"
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
