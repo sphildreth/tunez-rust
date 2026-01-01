@@ -31,6 +31,92 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 
 ---
 
+## 1. Coding agent template
+```
+You are a coding agent working in a VS Code workspace on the project `Tunez`.
+
+Objective
+- Complete: <PHASE_NAME> (Phase <N>)
+- Primary deliverable(s): <bullets>
+
+Hard constraints (do not violate)
+- Implement only what is required for this phase. No extra features, screens, or “nice-to-haves”.
+- Preserve existing public APIs unless the phase explicitly requires a breaking change.
+- Keep provider/scrobbler interfaces stable and provider-agnostic.
+- Keep secrets out of config files; use OS keyring for tokens.
+- Cross-platform behavior: Linux/macOS/Windows terminals.
+
+Context you should read first (in this repo)
+- `README.md`
+- `docs/tunez-requirements.md` (this PRD)
+- `docs/tunez-tui-mockups.md` (canonical UI layout)
+
+Scope for this phase
+IN SCOPE
+- <list the exact features/requirements to implement>
+
+OUT OF SCOPE
+- <list explicit non-goals for this phase>
+
+Definition of Done (must all be true)
+- Requirements implemented exactly as written for this phase.
+- Code compiles on Linux.
+- Quality gates pass: `cargo fmt`, `cargo clippy -D warnings`, `cargo test`.
+- User-visible behavior is verifiable with clear steps.
+- Any new config keys are documented (example snippet) and validated.
+
+Deliverables checklist
+- [ ] Code changes implementing the phase
+- [ ] Updated docs (as needed): PRD notes / config examples / usage
+- [ ] Tests updated/added where it makes sense (fast + deterministic)
+- [ ] Run commands + results captured in the final summary
+
+Documentation checklist (required when applicable)
+- [ ] Root `README.md` updated if this phase changes: build/run steps, prerequisites, repo layout, CLI, config shape, Providers/Scrobblers
+- [ ] PRD updated if requirements/scope/decisions change (avoid drift)
+- [ ] UI mockups referenced/updated if UX behavior changes
+- [ ] Any new config keys documented with a minimal example snippet
+
+Implementation guidance
+- Prefer a small, coherent Rust workspace layout (core / ui / player / audio / viz / cli / providers).
+- Add new crates only when it reduces coupling.
+- Model changes as small commits/patches; keep diffs focused.
+
+Required work approach
+1) Repo reconnaissance
+  - Identify the current crate/workspace layout and what already exists.
+  - Locate any existing traits/types relevant to this phase.
+
+2) Design a minimal plan
+  - Produce a short step plan (3–7 steps) and then execute it.
+  - Call out any ambiguities; if blocked, ask up to 3 targeted questions.
+
+3) Implement
+  - Make the smallest set of changes to satisfy the phase.
+  - If you introduce new abstractions, show why they are required.
+
+4) Verify
+  - Run `cargo fmt`, `cargo clippy -D warnings`, `cargo test`.
+  - If tests fail due to unrelated pre-existing issues, do not “fix the world”; report them.
+
+5) Handoff summary
+  - Provide: what changed, where, how to run, how to verify, and any follow-ups.
+
+What to return at the end
+- A concise summary of changes (grouped by crate/file).
+- The exact commands run and whether they passed.
+- Any known limitations or deferred items explicitly marked.
+
+Phase-specific details (fill these in before running)
+- Phase name: <PHASE_NAME>
+- Related PRD sections: <e.g., 4.1, 4.5, 9.1>
+- Workspace path: <e.g., /home/steven/source/tunez>
+- Feature flags involved (if any): <e.g., provider-filesystem>
+- Acceptance criteria: <bullet list>
+```
+
+---
+
 ## 2. Goals and Non-Goals
 
 ### 2.1 Goals (Phase 1)
@@ -375,6 +461,14 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 - Keybindings MUST be configurable (via TOML config).
 - The Help overlay SHOULD reflect the currently active keybindings rather than hard-coded defaults.
 
+### 5.2.1 In-app Help (Markdown-driven)
+**MUST**
+- The Help overlay content MUST be authored in Markdown and shipped with Tunez (e.g., embedded into the `tunez` binary at build time) so it is available offline.
+- Tunez MUST render the Help Markdown content in the TUI for user viewing (a limited Markdown subset is acceptable in Phase 1 as long as the content remains readable).
+
+**V2 (Not Phase 1)**
+- Online/hosted documentation (“online help”) and any in-app browsing of a docs website.
+
 ### 5.3 Color + themes
 **MUST**
 - 24-bit color support where terminal supports it
@@ -453,6 +547,25 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 
 **SHOULD**
 - Providers/Scrobblers SHOULD have a clear deprecation path for changed behaviors (warn + migrate) rather than silent behavior changes.
+
+### 6.9 Documentation (Developer onboarding)
+**MUST**
+- The root `README.md` MUST be kept accurate and updated as development progresses.
+- The root `README.md` MUST contain the information a developer needs to onboard, including at minimum:
+  - What Tunez is (one-paragraph overview + status)
+  - How to build/run/test/format (exact commands) once code exists
+  - Prerequisites (toolchain + platform notes)
+  - Where to find the canonical requirements and UI reference docs
+  - A high-level repo/workspace layout (current and/or planned)
+  - How to add a Provider/Scrobbler at a high level (when applicable)
+  - License and basic contributing guidance
+- Phase 1 user-facing help MUST be provided via the in-app Help overlay (offline, Markdown-driven); online/hosted help is deferred to V2.
+- Documentation changes MUST be included in the Definition of Done for any phase that changes:
+  - CLI commands/flags, configuration schema, workspace layout, Providers/Scrobblers, or user-facing behavior.
+
+**SHOULD**
+- The root `README.md` SHOULD match common “modern GitHub OSS” conventions (clear headings, quick links, concise sections, and a polished presentation) while remaining truthful.
+- Longer-form docs SHOULD live under `docs/` with the `README.md` acting as an index.
 
 ---
 

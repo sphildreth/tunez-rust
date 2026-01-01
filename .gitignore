@@ -1,0 +1,36 @@
+# --- Rust / Cargo ---
+/target/
+**/*.rs.bk
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.iml
+
+# --- OS / filesystem noise ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+
+# --- Temporary / backups ---
+*~
+*.swp
+*.swo
+
+# --- Node / web tooling (if docs-site later adds a JS toolchain) ---
+node_modules/
+/dist/
+/build/
+/.next/
+/.cache/
+
+# --- Python (if scripts later add Python tooling) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# NOTE: Do not ignore Cargo.lock here. For application binaries, Cargo.lock
+# is typically committed to ensure reproducible builds.
