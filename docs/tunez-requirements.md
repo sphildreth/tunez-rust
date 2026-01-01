@@ -9,8 +9,15 @@
 **Platforms:** Linux, macOS, Windows (native terminal)  
 **Extension model (Phase 1):** Modular Rust workspace with **built‑in Providers** (developer/power-user extensibility)
 
+**Extensibility terminology**
+- **Built-in Providers (Phase 1):** Rust crates compiled into the `tunez` binary.
+- **External plugins (Phase 2, optional):** out-of-tree extensions loaded/hosted by Tunez (not supported in Phase 1).
+
 ### 1.1 Problem statement
 Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/search a library and play music from one or more backends—while also being “fun”: smooth transitions, animated UI widgets, and a real-time spectrum/waveform visualization.
+
+**Target user proficiency**
+- Tunez is designed for terminal-comfortable users (tmux/SSH, keyboard-first workflows) who are comfortable editing TOML config files.
 
 ### 1.2 Why a TUI instead of a GUI?
 - Runs anywhere: SSH, tmux, headless boxes, minimal desktops
@@ -33,6 +40,8 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 4. **Spectrum / waveform visualization** synchronized with playback (at least a spectrum analyzer).
 5. **Cross-platform**: consistent behavior on Linux/macOS/Windows terminals.
 6. **Modular from day 1**: clean internal boundaries so new **Providers** can be added by developers without reworking the core.
+
+The Phase 1 architecture SHOULD remain future-proof for Phase 2 (external plugins) by keeping Provider/Scrobbler interfaces stable and isolating provider-specific code.
 
 ### 2.2 Non-goals (Phase 1)
 - Third-party “drop-in install” plugins (no plugin marketplace, no plugin folder install)
@@ -82,6 +91,7 @@ Tunez MUST define a Provider abstraction that supports a common set of operation
 - `browse(kind: artists|albums|playlists|genres, paging)`
 - `list_playlists(paging)`
 - `search_playlists(query, paging)`
+- `get_playlist(playlist_id)` and `list_playlist_tracks(playlist_id)`
 - `get_album(album_id)` and `list_album_tracks(album_id)`
 - `get_track(track_id)` (metadata)
 - `get_stream_url(track_id)` -> returns a **stream URL** (Provider returns a URL only in Phase 1)
@@ -97,6 +107,8 @@ For Providers that do not support a given operation, the Provider MUST return `P
 **Metadata baseline (Phase 1)**
 - Track metadata returned by Providers MUST include enough fields for the UI and scrobbling to function. At minimum: title, primary artist name, and a stable provider-scoped track id.
 - Track duration SHOULD be provided when known (seconds).
+- A stable provider-scoped track id MUST be treated as an opaque identifier. It MUST be stable across runs for the same backend entity, case-sensitive, and serializable in TOML/JSON.
+- Track ids SHOULD be reasonably bounded in size (e.g., <= 256 bytes) to avoid pathological memory/logging issues.
 
 **Error contract (Phase 1)**
 - Provider operations MUST return `Result<T, ProviderError>` (defined in the `tunez-core` crate) rather than ad-hoc error types.
@@ -157,6 +169,9 @@ For Providers that do not support a given operation, the Provider MUST return `P
 - Providers MUST handle token expiry/refresh gracefully (refresh when possible; otherwise return `ProviderError::AuthenticationError` and guide the user to re-auth).
 
 **SHOULD**
+- Providers interacting with rate-limited APIs SHOULD implement client-side backoff (and optional rate limiting) on 429/503-style responses.
+
+**SHOULD**
 - Login UX:
   - `tunez auth login --provider <id> --profile <name>`
   - `tunez auth status`
@@ -168,6 +183,10 @@ For Providers that do not support a given operation, the Provider MUST return `P
 **MUST**
 - Search tracks by text query.
 - Show paged results and allow keyboard navigation.
+
+**Edge cases**
+- Tunez MUST remain responsive on large libraries (tens of thousands of tracks) by using paging and incremental rendering.
+- Tunez MUST handle slow/unreliable networks gracefully by showing loading/progress states, timing out, and allowing retries without UI hangs.
 
 **SHOULD**
 - Filtered search (artist/album/year/genre) where supported by Provider.
@@ -267,6 +286,8 @@ Tunez MUST support scrobbling / play-event reporting via a modular component:
 - **Scrobbler**: a Rust component responsible for reporting playback events to a backend service.
 - Scrobblers MUST be pluggable at build-time (built-in crates), similar to Providers.
 
+Scrobbling MUST be **disabled by default** unless explicitly enabled/configured by the user (see Privacy).
+
 #### 4.10.1 Scrobbler-driven reporting model (Phase 1)
 To support different backends with different reporting rules, Tunez SHOULD NOT hard-code scrobbling thresholds (e.g., “10 seconds” or “50%”). Instead:
 
@@ -298,6 +319,7 @@ To support different backends with different reporting rules, Tunez SHOULD NOT h
 #### 4.10.3 Scrobbling configuration and persistence (Phase 1)
 **MUST**
 - Scrobbling MUST be configurable per provider/profile (enable/disable).
+- Tunez MUST support selecting a default Scrobbler when multiple are compiled in (e.g., `default_scrobbler` in config).
 - Tunez MUST persist pending scrobble events to local storage so they can be retried after restarts and while offline.
 - The persistence queue MUST be bounded (by count and/or age) to avoid unbounded growth.
 
@@ -336,6 +358,10 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 - Tunez MUST render a usable UI at 80x24.
 - If the terminal is smaller than the minimum, Tunez MUST degrade gracefully (e.g., hide non-essential panels like the visualizer/sidebar) and/or show a clear message indicating the minimum recommended size.
 
+**Terminal encoding**
+- Tunez MUST work correctly in UTF-8 terminals.
+- Tunez SHOULD provide ASCII-safe fallbacks for decorative box-drawing characters where feasible.
+
 ### 5.2 Input model
 **MUST**
 - Keyboard-first navigation (vim-ish defaults; rebindable):
@@ -346,6 +372,10 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
   - `/` search
   - `q` back/close
   - `?` help overlay
+
+**Keybinding customization**
+- Keybindings MUST be configurable (via TOML config).
+- The Help overlay SHOULD reflect the currently active keybindings rather than hard-coded defaults.
 
 ### 5.3 Color + themes
 **MUST**
@@ -360,6 +390,9 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 - Smooth progress bar updates (adaptive FPS)
 - Loading spinners
 - Spectrum analyzer animation while audio plays
+
+**SHOULD**
+- Target a responsive render cadence (e.g., 30–60 FPS on typical hardware) while remaining adaptive on slower terminals.
 
 ### 5.5 Accessibility
 **MUST**
@@ -403,6 +436,25 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
 ### 6.4 Portability / distribution
 - `cargo install tunez`
 - Prebuilt binaries for Linux/macOS/Windows (GitHub Releases)
+
+### 6.7 Dependencies & licensing
+**MUST**
+- Tunez MUST track third-party dependencies and their licenses (e.g., via a generated dependency/license report) and ensure redistribution remains compatible with the project’s license.
+
+### 6.8 Backward compatibility
+**MUST**
+- Tunez MUST preserve backward compatibility for user data/config where feasible (config/queue/scrobble retry queues), using migrations rather than breaking changes.
+
+**SHOULD**
+- Providers/Scrobblers SHOULD have a clear deprecation path for changed behaviors (warn + migrate) rather than silent behavior changes.
+
+### 6.6 Logging & diagnostics
+**MUST**
+- Tunez MUST support configurable log verbosity (e.g., via config and/or `--log-level`).
+- Log files MUST be bounded via rotation and/or retention limits to avoid unbounded disk growth.
+
+**SHOULD**
+- Redact sensitive values (tokens, URLs with embedded credentials) in logs where feasible.
 
 ---
 
@@ -645,6 +697,7 @@ Because Tunez is a TUI, most UI behavior SHOULD be tested as state transformatio
 
 ### 12.1 Provider streaming contract
 - Providers return **stream URLs only** (no provider-proxied streaming in Phase 1).
+- Stream URLs MUST be usable by the Tunez player. At minimum, Tunez MUST support `https://` and local file paths; Providers SHOULD prefer `https://` for remote streams.
 
 ### 12.2 Offline download support
 - Providers expose a capability flag: `supports_offline_download: bool`.
