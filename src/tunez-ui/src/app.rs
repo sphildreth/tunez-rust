@@ -1,4 +1,5 @@
 use std::io::stdout;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -15,7 +16,8 @@ use ratatui::{
     Frame, Terminal,
 };
 use thiserror::Error;
-use tunez_core::ProviderSelection;
+use tunez_core::{Provider, ProviderSelection};
+use tunez_player::{Player, PlayerState};
 
 use crate::help::HelpContent;
 
@@ -26,14 +28,18 @@ const HELP_HEIGHT: u16 = 70;
 const TICK_RATE: Duration = Duration::from_millis(50);
 const VIZ_MAX_VALUE: u16 = 100;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UiContext {
-    pub provider: ProviderSelection,
+    pub provider: Arc<dyn Provider>,
+    pub provider_selection: ProviderSelection,
 }
 
 impl UiContext {
-    pub fn new(provider: ProviderSelection) -> Self {
-        Self { provider }
+    pub fn new(provider: Arc<dyn Provider>, provider_selection: ProviderSelection) -> Self {
+        Self {
+            provider,
+            provider_selection,
+        }
     }
 }
 
@@ -66,7 +72,7 @@ pub fn run_ui(context: UiContext) -> Result<(), UiError> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut app = App::new(context.provider);
+    let mut app = App::new(context);
     let mut last_tick = Instant::now();
 
     loop {
@@ -94,7 +100,10 @@ pub fn run_ui(context: UiContext) -> Result<(), UiError> {
 }
 
 struct App {
-    provider: ProviderSelection,
+    #[allow(dead_code)] // Will be used for UI-provider integration
+    provider: Arc<dyn Provider>,
+    provider_selection: ProviderSelection,
+    player: Player,
     tabs: Vec<Tab>,
     active_tab: usize,
     show_help: bool,
@@ -104,10 +113,12 @@ struct App {
 }
 
 impl App {
-    fn new(provider: ProviderSelection) -> Self {
+    fn new(context: UiContext) -> Self {
         let use_color = std::env::var("NO_COLOR").is_err();
         Self {
-            provider,
+            provider: context.provider,
+            provider_selection: context.provider_selection,
+            player: Player::new(),
             tabs: Tab::all(),
             active_tab: 0,
             show_help: false,
@@ -148,6 +159,21 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.previous_tab(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
             KeyCode::Char(c) if c.is_ascii_digit() => self.jump_to_tab(c),
+            // Playback controls
+            KeyCode::Char(' ') => match self.player.state() {
+                tunez_player::PlayerState::Playing { .. } => {
+                    self.player.pause();
+                }
+                _ => {
+                    self.player.play();
+                }
+            },
+            KeyCode::Char('n') => {
+                self.player.skip_next();
+            }
+            KeyCode::Char('p') => {
+                // Previous track logic would go here
+            }
             _ => {}
         }
         false
@@ -210,13 +236,13 @@ impl App {
     }
 
     fn render_header(&self, frame: &mut Frame, area: Rect) {
-        let provider = if let Some(profile) = &self.provider.profile {
+        let provider = if let Some(profile) = &self.provider_selection.profile {
             format!(
                 "Provider: {} (profile: {})",
-                self.provider.provider_id, profile
+                self.provider_selection.provider_id, profile
             )
         } else {
-            format!("Provider: {}", self.provider.provider_id)
+            format!("Provider: {}", self.provider_selection.provider_id)
         };
 
         let status = Line::from(vec![
@@ -301,12 +327,16 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
+        let player_state_str = match self.player.state() {
+            PlayerState::Stopped => "⏹  Stopped",
+            PlayerState::Buffering { .. } => "⏳ Buffering",
+            PlayerState::Playing { .. } => "⏵  Playing",
+            PlayerState::Paused { .. } => "⏸  Paused",
+            PlayerState::Error { message, .. } => &format!("⚠️  Error: {}", message),
+        };
+
         let footer = Paragraph::new(Line::from(vec![
-            Span::raw("⏵  "),
-            Span::styled(
-                "Not playing",
-                self.style_fg(Color::Yellow).add_modifier(Modifier::DIM),
-            ),
+            Span::raw(player_state_str),
             Span::raw("   ▓▓▓▓░░░░░░  Vol: 72%  Rep:Off"),
         ]))
         .block(Block::default().borders(Borders::ALL).title("Player"));
@@ -479,14 +509,117 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tunez_core::provider::ProviderCapabilities;
+
+    // Mock provider for testing
+    struct MockProvider;
+
+    impl tunez_core::Provider for MockProvider {
+        fn id(&self) -> &str {
+            "mock"
+        }
+        fn name(&self) -> &str {
+            "Mock"
+        }
+        fn capabilities(&self) -> tunez_core::ProviderCapabilities {
+            ProviderCapabilities::default()
+        }
+        fn search_tracks(
+            &self,
+            _query: &str,
+            _filters: tunez_core::TrackSearchFilters,
+            _paging: tunez_core::PageRequest,
+        ) -> tunez_core::ProviderResult<tunez_core::Page<tunez_core::Track>> {
+            Ok(tunez_core::Page {
+                items: vec![],
+                next: None,
+            })
+        }
+        fn browse(
+            &self,
+            _kind: tunez_core::BrowseKind,
+            _paging: tunez_core::PageRequest,
+        ) -> tunez_core::ProviderResult<tunez_core::Page<tunez_core::CollectionItem>> {
+            Ok(tunez_core::Page {
+                items: vec![],
+                next: None,
+            })
+        }
+        fn list_playlists(
+            &self,
+            _paging: tunez_core::PageRequest,
+        ) -> tunez_core::ProviderResult<tunez_core::Page<tunez_core::Playlist>> {
+            Ok(tunez_core::Page {
+                items: vec![],
+                next: None,
+            })
+        }
+        fn search_playlists(
+            &self,
+            _query: &str,
+            _paging: tunez_core::PageRequest,
+        ) -> tunez_core::ProviderResult<tunez_core::Page<tunez_core::Playlist>> {
+            Ok(tunez_core::Page {
+                items: vec![],
+                next: None,
+            })
+        }
+        fn get_playlist(
+            &self,
+            _playlist_id: &tunez_core::PlaylistId,
+        ) -> tunez_core::ProviderResult<tunez_core::Playlist> {
+            unimplemented!()
+        }
+        fn list_playlist_tracks(
+            &self,
+            _playlist_id: &tunez_core::PlaylistId,
+            _paging: tunez_core::PageRequest,
+        ) -> tunez_core::ProviderResult<tunez_core::Page<tunez_core::Track>> {
+            Ok(tunez_core::Page {
+                items: vec![],
+                next: None,
+            })
+        }
+        fn get_album(
+            &self,
+            _album_id: &tunez_core::AlbumId,
+        ) -> tunez_core::ProviderResult<tunez_core::Album> {
+            unimplemented!()
+        }
+        fn list_album_tracks(
+            &self,
+            _album_id: &tunez_core::AlbumId,
+            _paging: tunez_core::PageRequest,
+        ) -> tunez_core::ProviderResult<tunez_core::Page<tunez_core::Track>> {
+            Ok(tunez_core::Page {
+                items: vec![],
+                next: None,
+            })
+        }
+        fn get_track(
+            &self,
+            _track_id: &tunez_core::TrackId,
+        ) -> tunez_core::ProviderResult<tunez_core::Track> {
+            unimplemented!()
+        }
+        fn get_stream_url(
+            &self,
+            _track_id: &tunez_core::TrackId,
+        ) -> tunez_core::ProviderResult<tunez_core::StreamUrl> {
+            unimplemented!()
+        }
+    }
 
     #[test]
     fn tab_numbers_jump_correctly() {
-        let provider = ProviderSelection {
+        let provider = Arc::new(MockProvider);
+        let provider_selection = ProviderSelection {
             provider_id: "filesystem".into(),
             profile: Some("home".into()),
         };
-        let mut app = App::new(provider);
+        let context = UiContext::new(provider, provider_selection);
+        let mut app = App::new(context);
         app.jump_to_tab('3');
         assert_eq!(app.active_tab, 2);
         app.jump_to_tab('9'); // out of range ignored

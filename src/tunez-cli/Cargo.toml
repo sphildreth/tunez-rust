@@ -15,4 +15,8 @@ clap = { workspace = true }
 thiserror = { workspace = true }
 tunez-core = { path = "../tunez-core" }
 tunez-ui = { path = "../tunez-ui" }
+tunez-player = { path = "../tunez-player" }
+tunez-audio = { path = "../tunez-audio" }
+filesystem-provider = { path = "../providers/filesystem-provider" }
+melodee-provider = { path = "../providers/melodee-provider" }
 tracing = { workspace = true }

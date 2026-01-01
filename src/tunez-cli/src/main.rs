@@ -256,6 +256,7 @@ fn main() -> Result<()> {
         None => {
             let selection = config
                 .resolve_provider_selection(cli.provider.as_deref(), cli.profile.as_deref())?;
+            let provider = create_provider(&selection, config)?;
             tracing::info!(
                 "Launching Tunez with provider '{}'{} (config dir: {})",
                 selection.provider_id,
@@ -266,11 +267,82 @@ fn main() -> Result<()> {
                     .unwrap_or_default(),
                 dirs.config_dir().display()
             );
-            run_ui(UiContext::new(selection))?;
+            run_ui(UiContext::new(provider, selection))?;
         }
     }
 
     Ok(())
+}
+
+fn create_provider(
+    selection: &ProviderSelection,
+    config: Config,
+) -> Result<std::sync::Arc<dyn tunez_core::Provider>, anyhow::Error> {
+    let provider_config = config
+        .providers
+        .get(&selection.provider_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("Provider '{}' not found in config", selection.provider_id)
+        })?;
+
+    match provider_config.kind.as_deref().unwrap_or("") {
+        "filesystem" => {
+            // Get the library root from the profile config or default to current directory
+            let library_root = if let Some(profile_name) = &selection.profile {
+                if let Some(profile) = provider_config.profiles.get(profile_name) {
+                    profile.library_root.as_deref().unwrap_or("./music")
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Profile '{}' not found for provider '{}'",
+                        profile_name,
+                        selection.provider_id
+                    ));
+                }
+            } else {
+                "./music" // default
+            };
+
+            let provider =
+                filesystem_provider::FilesystemProvider::new(vec![library_root.to_string()])?;
+            Ok(std::sync::Arc::new(provider))
+        }
+        "melodee" => {
+            // Get the base URL from the profile config
+            let base_url = if let Some(profile_name) = &selection.profile {
+                if let Some(profile) = provider_config.profiles.get(profile_name) {
+                    profile.base_url.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "'base_url' not found in profile '{}' for provider '{}'",
+                            profile_name,
+                            selection.provider_id
+                        )
+                    })?
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Profile '{}' not found for provider '{}'",
+                        profile_name,
+                        selection.provider_id
+                    ));
+                }
+            } else {
+                return Err(anyhow::anyhow!("Profile required for melodee provider"));
+            };
+
+            // For now, we'll use a placeholder access token - in a real implementation,
+            // this would come from secure storage (keyring) or be obtained via auth flow
+            let melodee_config = melodee_provider::MelodeeConfig {
+                base_url: base_url.to_string(),
+                access_token: None,
+            };
+
+            let provider = melodee_provider::MelodeeProvider::new(melodee_config)?;
+            Ok(std::sync::Arc::new(provider))
+        }
+        _ => Err(anyhow::anyhow!(
+            "Unknown provider kind: '{}'",
+            provider_config.kind.as_deref().unwrap_or("")
+        )),
+    }
 }
 
 fn print_providers(config: &Config) {

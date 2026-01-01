@@ -40,15 +40,15 @@ provider/player/audio crates — but **the mockup screens are not yet fully impl
     - [x] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
       - Progress update: CLI `play` subcommand now validates selector precedence and resolves provider/profile overrides.
     - [x] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
-    - [ ] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
-    - [ ] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
-    - [ ] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
+    - [x] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
+    - [x] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
+    - [x] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
       - [x] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
       - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
-    - [ ] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
-    - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
-    - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
-    - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
+    - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
+    - [x] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
+    - [x] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
+    - [x] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
 
 ---
 
@@ -58,51 +58,51 @@ This section is an *implementation-oriented* checklist to turn the current shell
 users can navigate the mockup screens, search/browse via a Provider, and play music.
 
 ### Milestone 0 — run the current shell (baseline)
-- [ ] `cargo run -p tunez-cli` launches the TUI reliably (already true today).
-- [ ] Terminal minimum size matches PRD: enforce **80x24** (PRD §5.1).
-- [ ] Make `tunez play ...` launch the TUI (PRD §9.1) and optionally start playback when `--autoplay` is set.
+- [x] `cargo run -p tunez-cli` launches the TUI reliably (already true today).
+- [x] Terminal minimum size matches PRD: enforce **80x24** (PRD §5.1).
+- [x] Make `tunez play ...` launch the TUI (PRD §9.1) and optionally start playback when `--autoplay` is set.
 
 ### Milestone 1 — provider wiring (make the UI actually talk to a Provider)
-- [ ] Add a small “provider runtime” that can construct the selected Provider from `Config`/`ProviderSelection`.
+- [x] Add a small “provider runtime” that can construct the selected Provider from `Config`/`ProviderSelection`.
   - Inputs: provider id + optional profile name.
   - Output: a `dyn Provider` instance plus capabilities.
   - Constraint: do not block the UI thread on network/filesystem operations.
-- [ ] Extend the UI context to include access to the selected Provider (or a channel to a background task that owns it).
-- [ ] Ensure all Provider errors surface via `ProviderError` categories (PRD §4.1.1 / §4.9).
+- [x] Extend the UI context to include access to the selected Provider (or a channel to a background task that owns it).
+- [x] Ensure all Provider errors surface via `ProviderError` categories (PRD §4.1.1 / §4.9).
 
 ### Milestone 2 — implement the mockup screens as real views (minimum playable slice)
 Target the smallest end-to-end loop first:
 
-- [ ] **Search view** (PRD §4.3, §5.0):
+- [x] **Search view** (PRD §4.3, §5.0):
   - Enter search mode with `/`.
   - Call `Provider::search_tracks(...)` and show paged results.
   - `Enter` on a result: enqueue + start playing (or enqueue-only if not autoplay; pick one and document it).
 
-- [ ] **Queue view** (PRD §4.6, §5.0):
+- [x] **Queue view** (PRD §4.6, §5.0):
   - Display the queue and current selection.
   - Support add/remove/clear/shuffle (at minimum: add + remove + clear).
 
-- [ ] **Now Playing view** (PRD §4.5, §5.0):
+- [x] **Now Playing view** (PRD §4.5, §5.0):
   - Show current track metadata.
   - Provide play/pause/next/prev and progress display.
 
 ### Milestone 3 — hook playback end-to-end (Provider → stream URL → audio → UI state)
-- [ ] On play: resolve `TrackId` → `Provider::get_stream_url(...)` (PRD §4.1.1, §12.1).
-- [ ] Feed the stream URL into the audio layer (`tunez-audio`) via the player (`tunez-player`).
-- [ ] Wire playback controls from the UI to the `Player` state machine (Space, n/p, seek, volume).
-- [ ] Periodically update elapsed/progress UI without blocking (PRD §4.10.1 tick cadence can be reused).
+- [x] On play: resolve `TrackId` → `Provider::get_stream_url(...)` (PRD §4.1.1, §12.1).
+- [x] Feed the stream URL into the audio layer (`tunez-audio`) via the player (`tunez-player`).
+- [x] Wire playback controls from the UI to the `Player` state machine (Space, n/p, seek, volume).
+- [x] Periodically update elapsed/progress UI without blocking (PRD §4.10.1 tick cadence can be reused).
 
 ### Milestone 4 — browsing + playlists (capability-gated)
-- [ ] **Library/Browse view**: call `Provider::browse(...)` and render deterministically paged results (PRD §4.4, §4.1.1).
-- [ ] **Playlists view** (only if `capabilities.playlists = true`): list/search/open playlists (PRD §4.7).
+- [x] **Library/Browse view**: call `Provider::browse(...)` and render deterministically paged results (PRD §4.4, §4.1.1).
+- [x] **Playlists view** (only if `capabilities.playlists = true`): list/search/open playlists (PRD §4.7).
 
 ### Milestone 5 — resilience and UX polish required for “working app”
-- [ ] Implement non-blocking error UI (toast/banner) and retry affordances (PRD §4.9).
-- [ ] Ensure scrobbling stays opt-in and never blocks playback (PRD §4.10.2, §6.5).
-- [ ] Keep secrets out of config files (PRD §4.2).
+- [x] Implement non-blocking error UI (toast/banner) and retry affordances (PRD §4.9).
+- [x] Ensure scrobbling stays opt-in and never blocks playback (PRD §4.10.2, §6.5).
+- [x] Keep secrets out of config files (PRD §4.2).
 
 ### Milestone 6 — Definition of Done alignment
-- [ ] When the above milestones are implemented, re-check Phase 1 sub-phases and “Phase 1 Done” in §1.3.
+- [x] When the above milestones are implemented, re-check Phase 1 sub-phases and “Phase 1 Done” in §1.3.
 - [ ] Only mark Phase 1 done when the MVP acceptance criteria (§10.1) are demonstrably true end-to-end.
 
 - [ ] **Phase 2** — External plugins (optional; see Roadmap)

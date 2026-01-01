@@ -2722,9 +2722,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "filesystem-provider",
+ "melodee-provider",
  "thiserror 1.0.69",
  "tracing",
+ "tunez-audio",
  "tunez-core",
+ "tunez-player",
  "tunez-ui",
 ]
 
@@ -2778,7 +2782,9 @@ dependencies = [
  "crossterm",
  "ratatui",
  "thiserror 1.0.69",
+ "tunez-audio",
  "tunez-core",
+ "tunez-player",
 ]
 
 [[package]]
