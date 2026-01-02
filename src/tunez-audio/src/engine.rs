@@ -10,6 +10,9 @@ use std::{
 
 use thiserror::Error;
 
+/// Type alias for audio sample callback
+pub type SampleCallback = Arc<dyn Fn(&[f32]) + Send + Sync>;
+
 /// Audio playback errors.
 #[derive(Debug, Error)]
 pub enum AudioError {
@@ -57,6 +60,8 @@ pub struct AudioHandle {
     /// Must be dropped on the same thread it was created.
     #[allow(dead_code)]
     local_keepalive: Option<Arc<Mutex<Box<dyn std::any::Any>>>>,
+    /// Optional callback for streaming audio samples to visualization
+    sample_callback: Option<SampleCallback>,
 }
 
 impl std::fmt::Debug for AudioHandle {
@@ -64,6 +69,13 @@ impl std::fmt::Debug for AudioHandle {
         f.debug_struct("AudioHandle")
             .field("state", &self.state())
             .finish_non_exhaustive()
+    }
+}
+
+impl AudioHandle {
+    /// Set a callback to receive audio samples for visualization
+    pub fn set_sample_callback(&mut self, callback: SampleCallback) {
+        self.sample_callback = Some(callback);
     }
 }
 
@@ -95,10 +107,11 @@ impl AudioHandle {
             join: Some(join),
             keepalive: None,
             local_keepalive: None,
+            sample_callback: None,
         }
     }
 
-    #[cfg(feature = "cpal-backend")]
+    #[allow(dead_code)]
     pub(crate) fn with_keepalive(
         state: Arc<Mutex<AudioState>>,
         stop_flag: Arc<AtomicBool>,
@@ -111,6 +124,7 @@ impl AudioHandle {
             join: Some(join),
             keepalive: None,
             local_keepalive: Some(keepalive),
+            sample_callback: None,
         }
     }
 
@@ -126,6 +140,13 @@ impl AudioHandle {
         // drop keepalive to release backend resources
         let _ = self.keepalive.take();
         let _ = self.local_keepalive.take();
+    }
+
+    /// Call the sample callback if set
+    pub fn send_samples(&self, samples: &[f32]) {
+        if let Some(callback) = &self.sample_callback {
+            callback(samples);
+        }
     }
 }
 

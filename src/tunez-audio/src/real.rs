@@ -18,6 +18,7 @@ use symphonia::{
 };
 
 use crate::{AudioEngine, AudioError, AudioHandle, AudioResult, AudioSource, AudioState};
+use crate::engine::SampleCallback;
 
 /// Audio engine backed by cpal + symphonia (local files only).
 #[derive(Debug, Default, Clone, Copy)]
@@ -68,18 +69,32 @@ impl AudioEngine for CpalAudioEngine {
         }
 
         let mut idx = 0usize;
+        // Create a shared sample callback that will be set on the handle
+        let sample_callback: Arc<Mutex<Option<SampleCallback>>> = Arc::new(Mutex::new(None));
+        let sample_callback_clone = sample_callback.clone();
+
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _| {
+                    // Generate samples for this chunk
+                    let mut chunk = Vec::with_capacity(data.len());
                     for sample in data.iter_mut() {
                         if stop_clone.load(Ordering::SeqCst) || idx >= interleaved.len() {
                             *sample = 0.0;
+                            chunk.push(0.0);
                             continue;
                         }
                         *sample = interleaved[idx];
+                        chunk.push(interleaved[idx]);
                         idx += 1;
                     }
+                    
+                    // Send samples to visualization callback if available
+                    if let Some(callback) = sample_callback_clone.lock().unwrap().as_ref() {
+                        callback(&chunk);
+                    }
+
                     if idx >= interleaved.len() {
                         stop_clone.store(true, Ordering::SeqCst);
                     }
@@ -118,15 +133,28 @@ impl AudioEngine for CpalAudioEngine {
         });
 
         // Keep stream alive by wrapping in Arc<Mutex> (Stream is not Send on some platforms)
+        #[allow(clippy::arc_with_non_send_sync)]
         let stream_keepalive: Arc<Mutex<Box<dyn std::any::Any>>> =
             Arc::new(Mutex::new(Box::new(stream)));
 
-        Ok(AudioHandle::with_keepalive(
+        let mut handle = AudioHandle::with_keepalive(
             state,
             stop_flag,
             join,
             stream_keepalive,
-        ))
+        );
+
+        // Set up the sample callback forwarding
+        // The handle will store the callback and the stream will call it
+        let sample_callback_clone = sample_callback.clone();
+        let forwarding_callback: SampleCallback = Arc::new(move |samples| {
+            if let Some(callback) = sample_callback_clone.lock().unwrap().as_ref() {
+                callback(samples);
+            }
+        });
+        handle.set_sample_callback(forwarding_callback);
+
+        Ok(handle)
     }
 }
 

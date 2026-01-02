@@ -1,5 +1,5 @@
 use std::io::stdout;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -12,13 +12,13 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Sparkline, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
 use thiserror::Error;
 use tunez_core::{Provider, ProviderSelection};
 use tunez_player::{Player, PlayerState};
-use tunez_viz::{Visualizer, VizMode};
+use tunez_viz::VizMode;
 
 use crate::help::HelpContent;
 
@@ -26,7 +26,6 @@ const MIN_WIDTH: u16 = 60;
 const MIN_HEIGHT: u16 = 18;
 const HELP_WIDTH: u16 = 80;
 const HELP_HEIGHT: u16 = 70;
-const TICK_RATE: Duration = Duration::from_millis(50);
 
 #[derive(Clone)]
 pub struct UiContext {
@@ -78,7 +77,16 @@ pub fn run_ui(context: UiContext) -> Result<(), UiError> {
     loop {
         terminal.draw(|frame| app.render(frame))?;
 
-        let timeout = TICK_RATE
+        // Calculate adaptive tick rate based on terminal size
+        let area = terminal.size().unwrap_or_default();
+        let fps = if let Ok(viz_guard) = app.visualizer.lock() {
+            viz_guard.get_recommended_fps(area.width, area.height)
+        } else {
+            20 // Default fallback
+        };
+        let tick_rate = Duration::from_millis(1000 / fps as u64);
+
+        let timeout = tick_rate
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_millis(0));
 
@@ -90,7 +98,7 @@ pub fn run_ui(context: UiContext) -> Result<(), UiError> {
             }
         }
 
-        if last_tick.elapsed() >= TICK_RATE {
+        if last_tick.elapsed() >= tick_rate {
             app.tick();
             last_tick = Instant::now();
         }
@@ -108,29 +116,42 @@ struct App {
     active_tab: usize,
     show_help: bool,
     help: HelpContent,
-    visualizer: tunez_viz::Visualizer,
+    visualizer: Arc<Mutex<tunez_viz::Visualizer>>,
     use_color: bool,
 }
 
 impl App {
     fn new(context: UiContext) -> Self {
         let use_color = std::env::var("NO_COLOR").is_err();
+        let visualizer = Arc::new(Mutex::new(tunez_viz::Visualizer::new()));
+        
+        // Set up sample callback for visualization
+        let viz_clone = visualizer.clone();
+        let mut player = Player::new();
+        player.set_sample_callback(move |samples| {
+            if let Ok(viz) = viz_clone.lock() {
+                viz.add_samples(samples);
+            }
+        });
+
         Self {
             provider: context.provider,
             provider_selection: context.provider_selection,
-            player: Player::new(),
+            player,
             tabs: Tab::all(),
             active_tab: 0,
             show_help: false,
             help: HelpContent::new(),
-            visualizer: tunez_viz::Visualizer::new(),
+            visualizer,
             use_color,
         }
     }
 
     fn tick(&mut self) {
-        // Update visualizer with sample data or animation
-        // In a real implementation, this would receive audio samples
+        // Update visualizer animation phase
+        if let Ok(mut viz) = self.visualizer.lock() {
+            viz.update_animation();
+        }
     }
 
     fn style_fg(&self, color: Color) -> Style {
@@ -170,11 +191,13 @@ impl App {
             // Visualization mode switching
             KeyCode::Char('v') => {
                 // Cycle through visualization modes
-                let current_mode = self.visualizer.mode();
-                let all_modes = VizMode::all();
-                let current_idx = all_modes.iter().position(|&m| m == current_mode).unwrap_or(0);
-                let next_idx = (current_idx + 1) % all_modes.len();
-                self.visualizer.set_mode(all_modes[next_idx]);
+                if let Ok(mut viz_guard) = self.visualizer.lock() {
+                    let current_mode = viz_guard.mode();
+                    let all_modes = VizMode::all();
+                    let current_idx = all_modes.iter().position(|&m| m == current_mode).unwrap_or(0);
+                    let next_idx = (current_idx + 1) % all_modes.len();
+                    viz_guard.set_mode(all_modes[next_idx]);
+                }
             }
             // Playback controls
             KeyCode::Char(' ') => match self.player.state() {
@@ -605,6 +628,7 @@ impl App {
     }
 
     fn render_visualizer(&self, frame: &mut Frame, area: Rect) {
+        // Graceful degradation based on terminal size
         if area.width < 24 || area.height < 4 {
             let msg = Paragraph::new("Visualizer hidden (terminal too small)")
                 .block(Block::default().borders(Borders::ALL).title("Visualizer"));
@@ -612,8 +636,19 @@ impl App {
             return;
         }
 
-        // Use the new visualization system
-        self.visualizer.render(frame, area);
+        // Check if visualization is supported
+        if let Ok(viz_guard) = self.visualizer.lock() {
+            if !viz_guard.should_render(area.width, area.height) {
+                let msg = Paragraph::new("Visualizer disabled (terminal too small)")
+                    .block(Block::default().borders(Borders::ALL).title("Visualizer"));
+                frame.render_widget(msg, area);
+                return;
+            }
+
+            // Use the new visualization system
+            // Pass color info to visualizer for monochrome fallback
+            viz_guard.render_with_color_support(frame, area, self.use_color);
+        }
     }
 
     fn render_help(&self, frame: &mut Frame, area: Rect) {

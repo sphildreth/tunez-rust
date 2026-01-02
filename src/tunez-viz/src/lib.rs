@@ -7,8 +7,8 @@ use ratatui::{
     widgets::{Block, Sparkline},
     Frame,
 };
-use rustfft::{FftPlanner, num_complex::Complex};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use tunez_core::models::Track;
 
 /// Different visualization modes available in Tunez
@@ -47,10 +47,8 @@ impl VizMode {
 /// Visualization state and computation
 #[derive(Clone)]
 pub struct Visualizer {
-    /// FFT size
-    fft_size: usize,
-    /// Audio sample buffer
-    sample_buffer: VecDeque<f32>,
+    /// Audio sample buffer (wrapped for thread safety)
+    sample_buffer: Arc<Mutex<VecDeque<f32>>>,
     /// Current visualization mode
     mode: VizMode,
     /// Current track for context
@@ -62,8 +60,7 @@ pub struct Visualizer {
 impl Visualizer {
     pub fn new() -> Self {
         Self {
-            fft_size: 1024,
-            sample_buffer: VecDeque::with_capacity(2048),
+            sample_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(2048))),
             mode: VizMode::Spectrum,
             current_track: None,
             phase: 0.0,
@@ -80,19 +77,55 @@ impl Visualizer {
         self.mode
     }
 
-    /// Add audio samples for visualization
-    pub fn add_samples(&mut self, samples: &[f32]) {
+    /// Add audio samples for visualization (thread-safe)
+    pub fn add_samples(&self, samples: &[f32]) {
+        let mut buffer = self.sample_buffer.lock().unwrap();
         for &sample in samples {
-            if self.sample_buffer.len() >= 2048 {
-                self.sample_buffer.pop_front();
+            if buffer.len() >= 2048 {
+                buffer.pop_front();
             }
-            self.sample_buffer.push_back(sample);
+            buffer.push_back(sample);
         }
     }
 
     /// Set the current track for context
     pub fn set_current_track(&mut self, track: Option<Track>) {
         self.current_track = track;
+    }
+
+    /// Update animation phase (called on each tick)
+    pub fn update_animation(&mut self) {
+        self.phase += 0.1;
+        if self.phase > std::f32::consts::TAU {
+            self.phase -= std::f32::consts::TAU;
+        }
+    }
+
+    /// Check if visualization should render based on terminal capabilities
+    /// Returns true if visualization should be rendered, false if it should be skipped
+    pub fn should_render(&self, width: u16, height: u16) -> bool {
+        // Minimum size for meaningful visualization
+        if width < 20 || height < 3 {
+            return false;
+        }
+        
+        // Check for color support (this would be passed from UI context)
+        // For now, always render if size is adequate
+        true
+    }
+
+    /// Get recommended FPS based on terminal size and capabilities
+    /// Returns frames per second (FPS)
+    pub fn get_recommended_fps(&self, width: u16, height: u16) -> u32 {
+        // Adaptive FPS based on terminal size
+        // Smaller terminals = lower FPS for better performance
+        if width < 40 || height < 8 {
+            15 // Low FPS for small terminals
+        } else if width < 60 || height < 12 {
+            25 // Medium FPS for medium terminals
+        } else {
+            30 // High FPS for large terminals
+        }
     }
 
     /// Compute visualization data based on current mode
@@ -108,8 +141,8 @@ impl Visualizer {
     fn compute_spectrum(&self) -> VisualizationData {
         // For now, return a simple visualization based on sample activity
         // In a real implementation, we would perform FFT analysis
-        let activity: f32 = self
-            .sample_buffer
+        let buffer = self.sample_buffer.lock().unwrap();
+        let activity: f32 = buffer
             .iter()
             .take(512)
             .map(|&s| s.abs())
@@ -127,14 +160,14 @@ impl Visualizer {
     }
 
     fn compute_oscilloscope(&self) -> VisualizationData {
-        let samples: Vec<u64> = self
-            .sample_buffer
+        let buffer = self.sample_buffer.lock().unwrap();
+        let samples: Vec<u64> = buffer
             .iter()
             .take(256) // Take a reasonable number of samples for waveform
             .map(|&s| {
                 // Scale to 0-100 range for visualization
                 let scaled = (s + 1.0) * 50.0; // From [-1,1] to [0,100]
-                scaled.max(0.0).min(100.0) as u64
+                scaled.clamp(0.0, 100.0) as u64
             })
             .collect();
 
@@ -143,8 +176,8 @@ impl Visualizer {
 
     fn compute_vu_meter(&self) -> VisualizationData {
         // Calculate RMS of recent samples
-        let rms: f32 = self
-            .sample_buffer
+        let buffer = self.sample_buffer.lock().unwrap();
+        let rms: f32 = buffer
             .iter()
             .take(128)
             .map(|&s| s * s)
@@ -162,8 +195,8 @@ impl Visualizer {
         let phase = (self.phase + 0.1) % (std::f32::consts::TAU);
 
         // Generate particle positions based on audio activity
-        let activity: f32 = self
-            .sample_buffer
+        let buffer = self.sample_buffer.lock().unwrap();
+        let activity: f32 = buffer
             .iter()
             .take(64)
             .map(|&s| s.abs())
@@ -184,19 +217,36 @@ impl Visualizer {
 
     /// Render the visualization to the frame
     pub fn render(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        self.render_with_color_support(frame, area, true);
+    }
+
+    /// Render the visualization with color support control
+    pub fn render_with_color_support(&self, frame: &mut Frame, area: ratatui::layout::Rect, use_color: bool) {
         let data = self.compute();
 
         match data {
             VisualizationData::Spectrum(magnitudes) => {
-                let sparkline = Sparkline::default()
+                let mut sparkline = Sparkline::default()
                     .block(Block::default().title(self.mode.name()))
                     .data(&magnitudes);
+                
+                // Apply color if supported
+                if use_color {
+                    sparkline = sparkline.style(Style::default().fg(ratatui::style::Color::Cyan));
+                }
+                
                 frame.render_widget(sparkline, area);
             }
             VisualizationData::Waveform(samples) => {
-                let sparkline = Sparkline::default()
+                let mut sparkline = Sparkline::default()
                     .block(Block::default().title(self.mode.name()))
                     .data(&samples);
+                
+                // Apply color if supported
+                if use_color {
+                    sparkline = sparkline.style(Style::default().fg(ratatui::style::Color::Green));
+                }
+                
                 frame.render_widget(sparkline, area);
             }
             VisualizationData::VUMeter(level) => {
@@ -206,16 +256,28 @@ impl Visualizer {
                     .map(|(i, _)| if (i + 1) as u64 * 10 <= level { 100 } else { 0 })
                     .collect();
 
-                let sparkline = Sparkline::default()
+                let mut sparkline = Sparkline::default()
                     .block(Block::default().title(self.mode.name()))
                     .data(&bar_data);
+                
+                // Apply color if supported
+                if use_color {
+                    sparkline = sparkline.style(Style::default().fg(ratatui::style::Color::Yellow));
+                }
+                
                 frame.render_widget(sparkline, area);
             }
             VisualizationData::Particles(_) => {
                 // For particles, we'll just show a placeholder since ratatui Sparkline doesn't support particle systems
-                let sparkline = Sparkline::default()
+                let mut sparkline = Sparkline::default()
                     .block(Block::default().title(self.mode.name()))
                     .data(&[50, 60, 70, 80, 90, 80, 70, 60, 50]);
+                
+                // Apply color if supported
+                if use_color {
+                    sparkline = sparkline.style(Style::default().fg(ratatui::style::Color::Magenta));
+                }
+                
                 frame.render_widget(sparkline, area);
             }
         }
@@ -260,7 +322,7 @@ mod tests {
 
     #[test]
     fn add_samples() {
-        let mut viz = Visualizer::new();
+        let viz = Visualizer::new();
         let samples = vec![0.5, -0.3, 0.8, -0.1];
         viz.add_samples(&samples);
         

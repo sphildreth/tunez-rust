@@ -1,5 +1,9 @@
 use crate::{Queue, QueueId, QueueItem};
+use std::sync::Arc;
 use tunez_audio::{AudioEngine, AudioHandle, AudioSource};
+
+/// Type alias for player sample callback
+pub type PlayerSampleCallback = Box<dyn Fn(&[f32]) + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PlayerState {
@@ -20,11 +24,22 @@ pub enum PlayerState {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Player {
     queue: Queue,
     state: PlayerState,
     audio: Option<AudioHandle>,
+    sample_callback: Option<PlayerSampleCallback>,
+}
+
+impl std::fmt::Debug for Player {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Player")
+            .field("queue", &self.queue)
+            .field("state", &self.state)
+            .field("audio", &self.audio)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Player {
@@ -48,6 +63,14 @@ impl Player {
         self.queue.current()
     }
 
+    /// Set a callback to receive audio samples for visualization
+    pub fn set_sample_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(&[f32]) + Send + Sync + 'static,
+    {
+        self.sample_callback = Some(Box::new(callback));
+    }
+
     pub fn play(&mut self) -> Option<&QueueItem> {
         if self.queue.current().is_none() {
             self.queue.select_first()?;
@@ -66,7 +89,13 @@ impl Player {
         self.play()?;
         let current_id = self.queue.current().map(|c| c.id)?;
         match engine.play(source) {
-            Ok(handle) => {
+            Ok(mut handle) => {
+                // Set up sample callback if one has been registered
+                if let Some(callback) = self.sample_callback.take() {
+                    // Convert Box to Arc for the AudioHandle
+                    let arc_callback: Arc<dyn Fn(&[f32]) + Send + Sync> = Arc::new(callback);
+                    handle.set_sample_callback(arc_callback);
+                }
                 self.audio = Some(handle);
                 self.queue.current()
             }
@@ -78,6 +107,11 @@ impl Player {
                 None
             }
         }
+    }
+
+    /// Get mutable access to audio handle for setting up callbacks
+    pub fn audio_mut(&mut self) -> Option<&mut AudioHandle> {
+        self.audio.as_mut()
     }
 
     pub fn pause(&mut self) -> bool {

@@ -174,7 +174,6 @@ impl MetadataCache {
 
     /// Evict old entries to make space
     fn evict_old_entries(&mut self) {
-        let now = SystemTime::now();
         let max_age = Duration::from_secs(self.config.max_age_seconds);
 
         // Remove old entries
@@ -217,6 +216,7 @@ impl MetadataCache {
     }
 
     /// Get cache statistics
+    #[allow(dead_code)]
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             track_count: self.tracks.len(),
@@ -229,6 +229,7 @@ impl MetadataCache {
 
 /// Cache statistics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CacheStats {
     pub track_count: usize,
     pub album_count: usize,

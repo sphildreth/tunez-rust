@@ -32,7 +32,8 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 If you change the code, update the checkboxes here so the PRD doesn't drift and confuse readers.
 As of **2026-01-01**, this repo includes a working **TUI shell** (tab navigation + Markdown help overlay), plus
 provider/player/audio crates with comprehensive unit tests — but **the mockup screens are not yet fully implemented/wired end-to-end**.
-Missing: visualization integration, scrobbling integration, cross-platform polish, and core TUI views (Now Playing, Search, Queue management).
+**Progress Update**: Phase 1H (Visualization MVP) is now complete with thread-safe sample streaming, adaptive FPS rendering, and graceful fallbacks.
+Missing: scrobbling integration, cross-platform polish, and full end-to-end provider wiring for all TUI views.
 
 - [ ] **Phase 1** — Built-in Providers (this document)
   - Phase 1 sub-phases (recommended; sized for incremental implementation)
@@ -46,7 +47,7 @@ Missing: visualization integration, scrobbling integration, cross-platform polis
     - [x] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
       - [x] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
       - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
-    - [ ] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
+    - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
     - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
     - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
     - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
@@ -60,6 +61,7 @@ users can navigate the mockup screens, search/browse via a Provider, and play mu
 
 ### Milestone 0 — run the current shell (baseline)
 - [x] `cargo run -p tunez-cli` launches the TUI reliably (already true today).
+- [x] Visualization MVP with adaptive FPS and graceful fallbacks (Phase 1H complete).
 - [ ] Terminal minimum size matches PRD: enforce **80x24** (PRD §5.1).
 - [ ] Make `tunez play ...` launch the TUI (PRD §9.1) and optionally start playback when `--autoplay` is set.
 
