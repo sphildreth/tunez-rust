@@ -103,7 +103,7 @@ Target the smallest end-to-end loop first:
 
 ### Milestone 6 — Definition of Done alignment
 - [x] When the above milestones are implemented, re-check Phase 1 sub-phases and “Phase 1 Done” in §1.3.
-- [ ] Only mark Phase 1 done when the MVP acceptance criteria (§10.1) are demonstrably true end-to-end.
+- [x] Only mark Phase 1 done when the MVP acceptance criteria (§10.1) are demonstrably true end-to-end.
 
 - [x] **Phase 2** — External plugins (optional; see Roadmap)
   - [x] Add a plugin host (exec-based or dylib-based) that adapts plugins to the Provider interface (11)

@@ -12,4 +12,4 @@ kind = "filesystem"
 
 [providers.filesystem.profiles.default]
 display_name = "Local Music"
-library_root = "./music"
+library_root = "./music-library"

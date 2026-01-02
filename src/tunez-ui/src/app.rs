@@ -159,6 +159,13 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.previous_tab(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
             KeyCode::Char(c) if c.is_ascii_digit() => self.jump_to_tab(c),
+            // Search mode
+            KeyCode::Char('/') => {
+                // Switch to search tab
+                if let Some(search_idx) = self.tabs.iter().position(|t| matches!(t, Tab::Search)) {
+                    self.active_tab = search_idx;
+                }
+            }
             // Playback controls
             KeyCode::Char(' ') => match self.player.state() {
                 tunez_player::PlayerState::Playing { .. } => {
@@ -295,35 +302,279 @@ impl App {
 
     fn render_main(&self, frame: &mut Frame, area: Rect) {
         let tab = self.tabs.get(self.active_tab).unwrap_or(&Tab::NowPlaying);
-        let title = format!("{} (Phase 1D shell)", tab.display_name());
-        let description = tab.description();
-        let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
-        ];
-        let mut lines = Vec::new();
-        lines.push(Line::from(Span::styled(
-            title,
-            self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        lines.extend(description);
-        lines.push(Line::from(""));
-        lines.extend(hints);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(5), Constraint::Length(6)])
             .split(area);
 
+        match tab {
+            Tab::NowPlaying => {
+                self.render_now_playing(frame, chunks[0]);
+                self.render_visualizer(frame, chunks[1]);
+            }
+            Tab::Search => {
+                self.render_search(frame, chunks[0]);
+            }
+            Tab::Library => {
+                self.render_library(frame, chunks[0]);
+            }
+            Tab::Playlists => {
+                self.render_playlists(frame, chunks[0]);
+            }
+            Tab::Queue => {
+                self.render_queue(frame, chunks[0]);
+            }
+            Tab::Lyrics => {
+                self.render_lyrics(frame, chunks[0]);
+            }
+            Tab::Config => {
+                self.render_config(frame, chunks[0]);
+            }
+            Tab::Help => {
+                self.render_help_main(frame, chunks[0]);
+            }
+        }
+    }
+
+    fn render_now_playing(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::NowPlaying.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let mut lines = Vec::new();
+        lines.push(Line::from(Span::styled(
+            title,
+            self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        // Show current track info if available
+        if let Some(current) = self.player.current() {
+            lines.push(Line::from(Span::styled(
+                format!("Now Playing: {} - {}", current.track.artist, current.track.title),
+                self.style_fg(Color::Green).add_modifier(Modifier::BOLD),
+            )));
+            if let Some(album) = &current.track.album {
+                lines.push(Line::from(format!("Album: {}", album)));
+            }
+            if let Some(duration) = current.track.duration_seconds {
+                lines.push(Line::from(format!("Duration: {}s", duration)));
+            }
+        } else {
+            lines.push(Line::from("No track playing"));
+        }
+
+        lines.push(Line::from(""));
+        lines.extend(hints);
+
         let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, chunks[0]);
+        frame.render_widget(paragraph, area);
+    }
 
-        if matches!(tab, Tab::NowPlaying) {
-            self.render_visualizer(frame, chunks[1]);
+    fn render_search(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Search.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let lines = vec![
+            Line::from(Span::styled(
+                title,
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Search functionality will be implemented here"),
+            Line::from("Press '/' to enter search mode"),
+            Line::from(""),
+        ];
+
+        let mut text = Text::from(lines);
+        text.extend(hints);
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_library(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Library.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let lines = vec![
+            Line::from(Span::styled(
+                title,
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Library browsing will be implemented here"),
+            Line::from("Browse artists, albums, genres"),
+            Line::from(""),
+        ];
+
+        let mut text = Text::from(lines);
+        text.extend(hints);
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_playlists(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Playlists.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let lines = vec![
+            Line::from(Span::styled(
+                title,
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Playlists will be implemented here"),
+            Line::from("List and manage playlists"),
+            Line::from(""),
+        ];
+
+        let mut text = Text::from(lines);
+        text.extend(hints);
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_queue(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Queue.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let mut lines = Vec::new();
+        lines.push(Line::from(Span::styled(
+            title,
+            self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        // Show queue items
+        lines.push(Line::from(format!("Queue: {} tracks", self.player.queue().len())));
+        if !self.player.queue().is_empty() {
+            lines.push(Line::from(""));
+            for (i, item) in self.player.queue().items().iter().take(10).enumerate() {
+                let prefix = if Some(item.id) == self.player.current().map(|c| c.id) {
+                    "▶ "
+                } else {
+                    "  "
+                };
+                lines.push(Line::from(format!("{}{}. {} - {}", prefix, i + 1, item.track.artist, item.track.title)));
+            }
+            if self.player.queue().len() > 10 {
+                lines.push(Line::from(format!("... and {} more", self.player.queue().len() - 10)));
+            }
+        } else {
+            lines.push(Line::from("Queue is empty"));
         }
+
+        lines.push(Line::from(""));
+        lines.extend(hints);
+
+        let paragraph = Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_lyrics(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Lyrics.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let lines = vec![
+            Line::from(Span::styled(
+                title,
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Lyrics display will be implemented here"),
+            Line::from(""),
+        ];
+
+        let mut text = Text::from(lines);
+        text.extend(hints);
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_config(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Config.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let lines = vec![
+            Line::from(Span::styled(
+                title,
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Configuration view will be implemented here"),
+            Line::from(""),
+        ];
+
+        let mut text = Text::from(lines);
+        text.extend(hints);
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_help_main(&self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1D shell)", Tab::Help.display_name());
+        let hints = vec![
+            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
+            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+        ];
+
+        let lines = vec![
+            Line::from(Span::styled(
+                title,
+                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Help content will be displayed here"),
+            Line::from(""),
+        ];
+
+        let mut text = Text::from(lines);
+        text.extend(hints);
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
@@ -420,34 +671,6 @@ impl Tab {
         }
     }
 
-    fn description(&self) -> Vec<Line<'static>> {
-        match self {
-            Tab::NowPlaying => vec![Line::from(
-                "Now Playing dashboard placeholder — playback wiring arrives in later phases.",
-            )],
-            Tab::Search => vec![Line::from(
-                "Search view placeholder — results and provider-backed queries arrive in later phases.",
-            )],
-            Tab::Library => vec![Line::from(
-                "Library browse placeholder — provider-driven navigation arrives in later phases.",
-            )],
-            Tab::Playlists => vec![Line::from(
-                "Playlists placeholder — listing and opening playlists will be added later.",
-            )],
-            Tab::Queue => vec![Line::from(
-                "Queue placeholder — queue management and playback ordering arrive in Phase 1E.",
-            )],
-            Tab::Lyrics => vec![Line::from(
-                "Lyrics placeholder — scrolling lyrics rendering arrives after provider support.",
-            )],
-            Tab::Config => vec![Line::from(
-                "Config placeholder — editable configuration UI will land with config UX work.",
-            )],
-            Tab::Help => vec![Line::from(
-                "Press ? to view the Markdown-driven help overlay.",
-            )],
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
