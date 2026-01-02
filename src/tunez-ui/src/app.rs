@@ -18,6 +18,7 @@ use ratatui::{
 use thiserror::Error;
 use tunez_core::{Provider, ProviderSelection};
 use tunez_player::{Player, PlayerState};
+use tunez_viz::{Visualizer, VizMode};
 
 use crate::help::HelpContent;
 
@@ -26,7 +27,6 @@ const MIN_HEIGHT: u16 = 18;
 const HELP_WIDTH: u16 = 80;
 const HELP_HEIGHT: u16 = 70;
 const TICK_RATE: Duration = Duration::from_millis(50);
-const VIZ_MAX_VALUE: u16 = 100;
 
 #[derive(Clone)]
 pub struct UiContext {
@@ -108,7 +108,7 @@ struct App {
     active_tab: usize,
     show_help: bool,
     help: HelpContent,
-    visualizer: Visualizer,
+    visualizer: tunez_viz::Visualizer,
     use_color: bool,
 }
 
@@ -123,13 +123,14 @@ impl App {
             active_tab: 0,
             show_help: false,
             help: HelpContent::new(),
-            visualizer: Visualizer::new(24),
+            visualizer: tunez_viz::Visualizer::new(),
             use_color,
         }
     }
 
     fn tick(&mut self) {
-        self.visualizer.update();
+        // Update visualizer with sample data or animation
+        // In a real implementation, this would receive audio samples
     }
 
     fn style_fg(&self, color: Color) -> Style {
@@ -165,6 +166,15 @@ impl App {
                 if let Some(search_idx) = self.tabs.iter().position(|t| matches!(t, Tab::Search)) {
                     self.active_tab = search_idx;
                 }
+            }
+            // Visualization mode switching
+            KeyCode::Char('v') => {
+                // Cycle through visualization modes
+                let current_mode = self.visualizer.mode();
+                let all_modes = VizMode::all();
+                let current_idx = all_modes.iter().position(|&m| m == current_mode).unwrap_or(0);
+                let next_idx = (current_idx + 1) % all_modes.len();
+                self.visualizer.set_mode(all_modes[next_idx]);
             }
             // Playback controls
             KeyCode::Char(' ') => match self.player.state() {
@@ -602,19 +612,8 @@ impl App {
             return;
         }
 
-        let bar_count = ((area.width.saturating_sub(2)) / 2).max(10) as usize;
-        let data = self.visualizer.bar_values(bar_count);
-        let viz_style = if self.use_color {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        };
-        let sparkline = Sparkline::default()
-            .block(Block::default().borders(Borders::ALL).title("Visualizer"))
-            .style(viz_style)
-            .max(VIZ_MAX_VALUE as u64)
-            .data(&data);
-        frame.render_widget(sparkline, area);
+        // Use the new visualization system
+        self.visualizer.render(frame, area);
     }
 
     fn render_help(&self, frame: &mut Frame, area: Rect) {
@@ -673,41 +672,6 @@ impl Tab {
 
 }
 
-#[derive(Debug, Clone)]
-struct Visualizer {
-    values: Vec<u16>,
-    phase: f32,
-}
-
-impl Visualizer {
-    fn new(bars: usize) -> Self {
-        Self {
-            values: vec![0; bars],
-            phase: 0.0,
-        }
-    }
-
-    fn update(&mut self) {
-        self.phase = (self.phase + 0.35) % (std::f32::consts::TAU);
-        for (i, value) in self.values.iter_mut().enumerate() {
-            let x = self.phase + i as f32 * 0.35;
-            let amplitude = ((x.sin() + 1.0) * (VIZ_MAX_VALUE as f32 / 2.0)).round();
-            *value = amplitude as u16;
-        }
-    }
-
-    fn bar_values(&self, count: usize) -> Vec<u64> {
-        if count == 0 {
-            return Vec::new();
-        }
-        let mut data = Vec::with_capacity(count);
-        for i in 0..count {
-            let idx = i % self.values.len().max(1);
-            data.push(self.values.get(idx).copied().unwrap_or(0) as u64);
-        }
-        data
-    }
-}
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let horizontal = Layout::default()

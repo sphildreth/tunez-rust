@@ -12,3 +12,4 @@ thiserror = { workspace = true }
 tunez-core = { path = "../tunez-core" }
 tunez-player = { path = "../tunez-player" }
 tunez-audio = { path = "../tunez-audio" }
+tunez-viz = { path = "../tunez-viz" }

@@ -1,6 +1,8 @@
+mod cache;
 mod scan;
 mod tags;
 
+use cache::{MetadataCache, CacheConfig};
 use scan::{scan_library_with_options, LibraryIndex, ScanOptions};
 use std::sync::{Arc, RwLock};
 use tunez_core::models::{
@@ -19,6 +21,7 @@ pub struct FilesystemProvider {
     capabilities: Arc<RwLock<ProviderCapabilities>>,
     roots: Vec<String>,
     options: ScanOptions,
+    cache: Arc<RwLock<MetadataCache>>,
 }
 
 impl FilesystemProvider {
@@ -29,6 +32,7 @@ impl FilesystemProvider {
     pub fn with_options(roots: Vec<String>, options: ScanOptions) -> Result<Self, ProviderError> {
         let index = scan_library_with_options(roots.clone(), options.clone())?;
         let caps = Self::capabilities_from_index(&index);
+        let cache = MetadataCache::new(CacheConfig::default());
         Ok(Self {
             id: "filesystem".into(),
             name: "Filesystem".into(),
@@ -36,6 +40,7 @@ impl FilesystemProvider {
             capabilities: Arc::new(RwLock::new(caps)),
             roots,
             options,
+            cache: Arc::new(RwLock::new(cache)),
         })
     }
 
@@ -46,6 +51,11 @@ impl FilesystemProvider {
         let caps = Self::capabilities_from_index(&guard);
         let mut caps_guard = self.capabilities.write().expect("capabilities poisoned");
         *caps_guard = caps;
+
+        // Clear cache on rescan
+        let mut cache_guard = self.cache.write().expect("cache poisoned");
+        cache_guard.clear();
+
         Ok(())
     }
 
@@ -237,6 +247,16 @@ impl Provider for FilesystemProvider {
                 operation: "get_playlist".into(),
             });
         }
+
+        // Check cache first
+        {
+            let cache = self.cache.read().expect("cache poisoned");
+            if let Some(playlist) = cache.get_playlist(&playlist_id.0) {
+                return Ok(playlist.clone());
+            }
+        }
+
+        // Not in cache, get from index
         let index = self.index.read().expect("index poisoned");
         let entry = index
             .playlists
@@ -244,7 +264,16 @@ impl Provider for FilesystemProvider {
             .ok_or(ProviderError::NotFound {
                 entity: playlist_id.0.clone(),
             })?;
-        Ok(entry.playlist.clone())
+
+        let playlist = entry.playlist.clone();
+
+        // Add to cache
+        {
+            let mut cache = self.cache.write().expect("cache poisoned");
+            cache.add_playlist(playlist_id.0.clone(), playlist.clone());
+        }
+
+        Ok(playlist)
     }
 
     fn list_playlist_tracks(
@@ -287,14 +316,31 @@ impl Provider for FilesystemProvider {
     }
 
     fn get_album(&self, album_id: &AlbumId) -> ProviderResult<Album> {
+        // Check cache first
+        {
+            let cache = self.cache.read().expect("cache poisoned");
+            if let Some(album) = cache.get_album(&album_id.0) {
+                return Ok(album.clone());
+            }
+        }
+
+        // Not in cache, get from index
         let index = self.index.read().expect("index poisoned");
-        index
+        let album = index
             .albums
             .get(album_id)
             .cloned()
             .ok_or_else(|| ProviderError::NotFound {
                 entity: album_id.0.clone(),
-            })
+            })?;
+
+        // Add to cache
+        {
+            let mut cache = self.cache.write().expect("cache poisoned");
+            cache.add_album(album_id.0.clone(), album.clone());
+        }
+
+        Ok(album)
     }
 
     fn list_album_tracks(
@@ -332,15 +378,33 @@ impl Provider for FilesystemProvider {
     }
 
     fn get_track(&self, track_id: &TrackId) -> ProviderResult<Track> {
+        // Check cache first
+        let path = std::path::PathBuf::from(&track_id.0);
+        {
+            let cache = self.cache.read().expect("cache poisoned");
+            if let Some(track) = cache.get_track(&path) {
+                return Ok(track.clone());
+            }
+        }
+
+        // Not in cache, get from index
         let index = self.index.read().expect("index poisoned");
-        index
+        let track = index
             .tracks
             .iter()
             .find(|t| &t.id == track_id)
             .cloned()
             .ok_or_else(|| ProviderError::NotFound {
                 entity: track_id.0.clone(),
-            })
+            })?;
+
+        // Add to cache
+        {
+            let mut cache = self.cache.write().expect("cache poisoned");
+            cache.add_track(path, track.clone());
+        }
+
+        Ok(track)
     }
 
     fn get_stream_url(&self, track_id: &TrackId) -> ProviderResult<StreamUrl> {

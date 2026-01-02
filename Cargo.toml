@@ -6,6 +6,7 @@ members = [
     "src/tunez-audio",
     "src/tunez-player",
     "src/tunez-plugin",
+    "src/tunez-viz",
     "src/providers/filesystem-provider",
     "src/providers/melodee-provider",
 ]

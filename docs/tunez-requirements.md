@@ -109,9 +109,9 @@ Target the smallest end-to-end loop first:
   - [x] Add a plugin host (exec-based or dylib-based) that adapts plugins to the Provider interface (11)
   - [x] Keep Phase 1 Providers working unchanged (11)
 
-- [ ] **Phase 3** — Fancy extras / polish (optional; see Roadmap)
-  - [ ] More visualization modes + theme editor (11)
-  - [ ] Better caching and offline modes (11)
+- [x] **Phase 3** — Fancy extras / polish (optional; see Roadmap)
+  - [x] More visualization modes + theme editor (11)
+  - [x] Better caching and offline modes (11)
 
 ---
 
