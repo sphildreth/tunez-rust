@@ -11,7 +11,7 @@ use tunez_core::{
 };
 
 /// Type alias for error callbacks.
-pub type ErrorCallback = Box<dyn Fn(&str) + Send + Sync>;
+pub type ErrorCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Manages scrobbling for a player, ensuring failures don't interrupt playback.
 pub struct ScrobblerManager {
@@ -71,7 +71,7 @@ impl ScrobblerManager {
     where
         F: Fn(&str) + Send + Sync + 'static,
     {
-        self.error_callback = Some(Box::new(callback));
+        self.error_callback = Some(Arc::new(callback));
     }
 
     /// Enable or disable scrobbling.
@@ -179,20 +179,26 @@ impl ScrobblerManager {
             device_id: self.device_id.clone(),
         };
 
-        // Submit, but never interrupt playback on failure
-        if let Err(e) = scrobbler.submit(&event) {
-            tracing::warn!(
-                scrobbler_id = scrobbler.id(),
-                error = %e,
-                track = %item.track.title,
-                "scrobble submission failed"
-            );
+        // Submit via background task, never interrupt playback
+        let scrobbler = scrobbler.clone();
+        let callback = self.error_callback.clone();
+        let track_title = item.track.title.clone(); // Clone for logging inside async block
 
-            // Notify via callback (for UI indicator)
-            if let Some(callback) = &self.error_callback {
-                callback(&format!("Scrobble failed: {}", e));
+        tokio::spawn(async move {
+            if let Err(e) = scrobbler.submit(&event).await {
+                tracing::warn!(
+                    scrobbler_id = scrobbler.id(),
+                    error = %e,
+                    track = %track_title,
+                    "scrobble submission failed"
+                );
+
+                // Notify via callback (for UI indicator)
+                if let Some(cb) = callback {
+                    cb(&format!("Scrobble failed: {}", e));
+                }
             }
-        }
+        });
     }
 
     /// Get the configured tick interval.

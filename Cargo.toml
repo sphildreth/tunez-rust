@@ -9,6 +9,7 @@ members = [
     "src/tunez-viz",
     "src/providers/filesystem-provider",
     "src/providers/melodee-provider",
+    "src/scrobblers/melodee-scrobbler",
 ]
 resolver = "2"
 

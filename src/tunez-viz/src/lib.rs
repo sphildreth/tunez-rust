@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Sparkline},
     Frame,
 };
+use rustfft::{num_complex::Complex, num_traits::Zero, Fft, FftPlanner};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tunez_core::models::Track;
@@ -55,15 +56,36 @@ pub struct Visualizer {
     current_track: Option<Track>,
     /// Animation phase for particle effects
     phase: f32,
+    /// FFT processor
+    fft: Arc<dyn Fft<f32>>,
+    /// Pre-computed Hann window
+    window: Vec<f32>,
+    /// Scratch buffer for FFT computation
+    scratch: Arc<Mutex<Vec<Complex<f32>>>>,
 }
 
 impl Visualizer {
     pub fn new() -> Self {
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(1024);
+        
+        // Pre-compute Hann window
+        let window: Vec<f32> = (0..1024)
+            .map(|i| {
+                let n = i as f32;
+                let len = 1024.0;
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * n / (len - 1.0)).cos())
+            })
+            .collect();
+
         Self {
             sample_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(2048))),
             mode: VizMode::Spectrum,
             current_track: None,
             phase: 0.0,
+            fft,
+            window,
+            scratch: Arc::new(Mutex::new(vec![Complex::zero(); 1024])),
         }
     }
 
@@ -139,24 +161,60 @@ impl Visualizer {
     }
 
     fn compute_spectrum(&self) -> VisualizationData {
-        // For now, return a simple visualization based on sample activity
-        // In a real implementation, we would perform FFT analysis
-        let buffer = self.sample_buffer.lock().unwrap();
-        let activity: f32 = buffer
+        let buffer_lock = self.sample_buffer.lock().unwrap();
+        // Take latest 1024 samples
+        let len = buffer_lock.len();
+        let skip = if len > 1024 { len - 1024 } else { 0 };
+        
+        let mut input: Vec<Complex<f32>> = buffer_lock
             .iter()
-            .take(512)
-            .map(|&s| s.abs())
-            .sum::<f32>();
+            .skip(skip)
+            .zip(self.window.iter())
+            .map(|(&s, &w)| Complex::new(s * w, 0.0))
+            .collect();
+            
+        // Pad with zeros if not enough samples
+        while input.len() < 1024 {
+            input.push(Complex::zero());
+        }
+        
+        // Drop lock before expensive FFT
+        drop(buffer_lock);
+        
+        // Run FFT
+        let mut scratch = self.scratch.lock().unwrap();
+        // Fft::process takes buffer as slice of Complex.
+        // It processes in-place or out-of-place depending on implementation, 
+        // but rustfft `process` generally takes `&mut [Complex]`.
+        // We reuse the scratch buffer if needed, but here `input` is our proper buffer.
+        // `process` takes `input` and `scratch`.
+        if let Err(_) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+             // Just safeguard against partial inputs, though we padded.
+        })) {}
 
-        let magnitudes: Vec<u64> = (0..64)
-            .map(|i| {
-                let base = (activity * 10.0) as u64;
-                let variation = (i as u64 * 5) % 20;
-                base.saturating_sub(variation)
+        self.fft.process_with_scratch(&mut input, &mut scratch);
+        
+        // Compute magnitudes (first half is enough, symmetric)
+        // 512 bins from 0 to Nyquist.
+        // Map to 64 bars typically.
+        let magnitudes: Vec<f32> = input.iter()
+            .take(512)
+            .map(|c| c.norm())
+            .collect();
+            
+        // Map 512 bins to ~64 display bars
+        // Simple linear grouping for MVP, or log
+        // Let's do a simple grouping: 512 / 8 = 64
+        let bars: Vec<u64> = magnitudes.chunks(8)
+            .map(|chunk| {
+                 let sum: f32 = chunk.iter().sum();
+                 // Scale for visual
+                 let val = (sum * 2.0).min(100.0);
+                 val as u64
             })
             .collect();
 
-        VisualizationData::Spectrum(magnitudes)
+        VisualizationData::Spectrum(bars)
     }
 
     fn compute_oscilloscope(&self) -> VisualizationData {
@@ -330,6 +388,47 @@ mod tests {
         match data {
             VisualizationData::Spectrum(_) => {} // Expected
             _ => panic!("Expected spectrum data"),
+        }
+    }
+
+    #[test]
+    fn spectrum_detects_sine_wave() {
+        // Generate a sine wave at ~2200Hz (approx bin 50 of 1024 points at 44.1kHz)
+        // 1024 points.
+        // We just need a pure tone.
+        // If we have 1024 samples, and the sine wave completes N cycles in that window.
+        // frequency bin k = cycles * (SampleRate / N) ? No, 
+        // bin k corresponds to k cycles per window.
+        // So if we inject a sine wave with 32 cycles in 1024 samples.
+        // Bin 32 should peak.
+        // 32 cycles in 1024 samples.
+        let hz = 32.0;
+        let samples: Vec<f32> = (0..2048) // Fill more than enough
+            .map(|i| {
+                let t = i as f32;
+                (t * hz * std::f32::consts::TAU / 1024.0).sin()
+            })
+            .collect();
+            
+        let viz = Visualizer::new();
+        viz.add_samples(&samples);
+        
+        // Compute
+        let data = viz.compute();
+        match data {
+            VisualizationData::Spectrum(bars) => {
+                // We bucket 512 bins into 64 bars. 8 bins per bar.
+                // Bin 32 is in bar range [32/8] = 4.
+                // So bar 4 should have high value.
+                assert!(bars.len() >= 5);
+                // Check if peak is roughly where expected
+                // Note: Windowing might spread energy slightly, but 4 should be high.
+                let peak_idx = bars.iter().enumerate().max_by_key(|(_, &v)| v).map(|(i, _)| i).unwrap();
+                println!("Peak index: {}", peak_idx);
+                // Allow +/- 1 bar tolerance
+                assert!((peak_idx as i32 - 4).abs() <= 1, "Expected peak around bar 4, got {}", peak_idx);
+            }
+            _ => panic!("Wrong mode"),
         }
     }
 }

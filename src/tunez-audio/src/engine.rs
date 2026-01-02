@@ -62,6 +62,10 @@ pub struct AudioHandle {
     local_keepalive: Option<Arc<Mutex<Box<dyn std::any::Any>>>>,
     /// Optional callback for streaming audio samples to visualization
     sample_callback: Option<SampleCallback>,
+    /// Number of frames (independent samples) played so far
+    frames_played: Arc<std::sync::atomic::AtomicU64>,
+    /// Sample rate (frames per second)
+    sample_rate: u32,
 }
 
 impl std::fmt::Debug for AudioHandle {
@@ -108,6 +112,8 @@ impl AudioHandle {
             keepalive: None,
             local_keepalive: None,
             sample_callback: None,
+            frames_played: Arc::new(std::sync::atomic::AtomicU64::new(0)), // Default for simulated
+            sample_rate: 0, // Default for simulated
         }
     }
 
@@ -117,6 +123,8 @@ impl AudioHandle {
         stop_flag: Arc<AtomicBool>,
         join: JoinHandle<()>,
         keepalive: Arc<Mutex<Box<dyn std::any::Any>>>,
+        frames_played: Arc<std::sync::atomic::AtomicU64>,
+        sample_rate: u32,
     ) -> Self {
         Self {
             state,
@@ -125,6 +133,8 @@ impl AudioHandle {
             keepalive: None,
             local_keepalive: Some(keepalive),
             sample_callback: None,
+            frames_played,
+            sample_rate,
         }
     }
 
@@ -146,6 +156,16 @@ impl AudioHandle {
     pub fn send_samples(&self, samples: &[f32]) {
         if let Some(callback) = &self.sample_callback {
             callback(samples);
+        }
+    }
+
+    /// Get current playback position
+    pub fn position(&self) -> Duration {
+        let frames = self.frames_played.load(Ordering::SeqCst);
+        if self.sample_rate > 0 {
+            Duration::from_secs_f64(frames as f64 / self.sample_rate as f64)
+        } else {
+            Duration::ZERO
         }
     }
 }

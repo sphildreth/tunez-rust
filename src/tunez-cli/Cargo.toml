@@ -20,4 +20,5 @@ tunez-audio = { path = "../tunez-audio" }
 tunez-plugin = { path = "../tunez-plugin" }
 filesystem-provider = { path = "../providers/filesystem-provider" }
 melodee-provider = { path = "../providers/melodee-provider" }
+melodee-scrobbler = { path = "../scrobblers/melodee-scrobbler" }
 tracing = { workspace = true }

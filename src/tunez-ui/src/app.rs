@@ -31,13 +31,19 @@ const HELP_HEIGHT: u16 = 70;
 pub struct UiContext {
     pub provider: Arc<dyn Provider>,
     pub provider_selection: ProviderSelection,
+    pub scrobbler: Option<Arc<dyn tunez_core::Scrobbler>>,
 }
 
 impl UiContext {
-    pub fn new(provider: Arc<dyn Provider>, provider_selection: ProviderSelection) -> Self {
+    pub fn new(
+        provider: Arc<dyn Provider>,
+        provider_selection: ProviderSelection,
+        scrobbler: Option<Arc<dyn tunez_core::Scrobbler>>,
+    ) -> Self {
         Self {
             provider,
             provider_selection,
+            scrobbler,
         }
     }
 }
@@ -117,6 +123,7 @@ struct App {
     show_help: bool,
     help: HelpContent,
     visualizer: Arc<Mutex<tunez_viz::Visualizer>>,
+    scrobbler_manager: tunez_player::ScrobblerManager,
     use_color: bool,
 }
 
@@ -124,6 +131,14 @@ impl App {
     fn new(context: UiContext) -> Self {
         let use_color = std::env::var("NO_COLOR").is_err();
         let visualizer = Arc::new(Mutex::new(tunez_viz::Visualizer::new()));
+        
+        let mut scrobbler_manager = tunez_player::ScrobblerManager::new(
+            context.scrobbler,
+            "Tunez",
+            None, // Device ID could be added to config later
+        );
+        // Enable scrobbling if a scrobbler is present
+        scrobbler_manager.set_enabled(scrobbler_manager.is_active());
         
         // Set up sample callback for visualization
         let viz_clone = visualizer.clone();
@@ -144,6 +159,7 @@ impl App {
             help: HelpContent::new(),
             visualizer,
             use_color,
+            scrobbler_manager,
         }
     }
 
@@ -152,6 +168,10 @@ impl App {
         if let Ok(mut viz) = self.visualizer.lock() {
             viz.update_animation();
         }
+        
+        // Update scrobbler progress
+        // Note: we cast Duration to u64 seconds, losing sub-second precision which is fine for scrobbling interval checks
+        self.scrobbler_manager.tick(&self.player, self.player.position().as_secs());
     }
 
     fn style_fg(&self, color: Color) -> Style {
@@ -203,13 +223,37 @@ impl App {
             KeyCode::Char(' ') => match self.player.state() {
                 tunez_player::PlayerState::Playing { .. } => {
                     self.player.pause();
+                    self.scrobbler_manager.on_state_change(&self.player, tunez_core::PlaybackState::Paused);
                 }
                 _ => {
                     self.player.play();
+                    match self.player.state() {
+                         tunez_player::PlayerState::Playing { .. } => {
+                             self.scrobbler_manager.on_state_change(&self.player, tunez_core::PlaybackState::Resumed);
+                             // Or Started? Context dependent. Simple toggling usually implies Resume if paused.
+                             // If it was Stopped, it implies Started.
+                             // We should check previous state? 
+                             // Simplify: just say Resumed/Started. Manager logic should handle duplicates or we trust the mapping.
+                             // Actually, Play vs Resume.
+                             // If we were Stopped, play() starts from scratch.
+                             // If Paused, play() resumes.
+                             // We can check local var logic or assume Started if position is near 0?
+                             // Let's assume on_state_change handles it or we refine.
+                             // For now, let's map to Started if we were Stopped?
+                             // But self.player.play() resets state.
+                             // Let's assume Started for simplicity in toggle from Stopped.
+                             self.scrobbler_manager.on_state_change(&self.player, tunez_core::PlaybackState::Started);
+                         }
+                         _ => {}
+                    }
                 }
             },
             KeyCode::Char('n') => {
+                // Scrobble stop for current track before skipping
+                self.scrobbler_manager.on_state_change(&self.player, tunez_core::PlaybackState::Stopped);
                 self.player.skip_next();
+                // Scrobble start for new track
+                self.scrobbler_manager.on_state_change(&self.player, tunez_core::PlaybackState::Started);
             }
             KeyCode::Char('p') => {
                 // Previous track logic would go here

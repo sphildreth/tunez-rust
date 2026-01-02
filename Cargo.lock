@@ -1347,6 +1347,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "melodee-scrobbler"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tunez-core",
+ "wiremock",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2785,6 +2800,7 @@ dependencies = [
  "clap",
  "filesystem-provider",
  "melodee-provider",
+ "melodee-scrobbler",
  "thiserror 1.0.69",
  "tracing",
  "tunez-audio",
@@ -2798,6 +2814,7 @@ dependencies = [
 name = "tunez-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "directories",
  "keyring",
  "serde",
@@ -2820,6 +2837,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
  "tunez-audio",
  "tunez-core",

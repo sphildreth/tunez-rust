@@ -73,23 +73,45 @@ impl AudioEngine for CpalAudioEngine {
         let sample_callback: Arc<Mutex<Option<SampleCallback>>> = Arc::new(Mutex::new(None));
         let sample_callback_clone = sample_callback.clone();
 
+        // Create frames_played counter
+        let frames_played = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let frames_played_clone = frames_played.clone();
+        // Reset idx for stream (already initialized above but we need to track it inside closure)
+        // Wait, current impl captures `idx` by value (copy) if it's usize? No, closure moves `idx`.
+        // `idx` is initialized at line 71: `let mut idx = 0usize;`.
+        // `move |data...|` captures it.
+        
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _| {
                     // Generate samples for this chunk
+                    let channels = 2; // Hardcoded? No, `channels` var at line 61. But we can't capture it easily if traits obscure it?
+                    // Re-capture `channels` from outer scope?
+                    // Wait, `channels` is defined at line 61. Closure `move` will capture it.
+                    let channel_count = channels;
+                    
                     let mut chunk = Vec::with_capacity(data.len());
+                    let mut frames_processed = 0;
+                    
                     for sample in data.iter_mut() {
                         if stop_clone.load(Ordering::SeqCst) || idx >= interleaved.len() {
                             *sample = 0.0;
                             chunk.push(0.0);
+                            // Do not increment idx/frames if stopped/finished
                             continue;
                         }
                         *sample = interleaved[idx];
                         chunk.push(interleaved[idx]);
                         idx += 1;
+                        frames_processed += 1;
                     }
                     
+                    // Update frames played (frames = samples / channels)
+                    if channel_count > 0 {
+                         frames_played_clone.fetch_add((frames_processed / channel_count) as u64, Ordering::SeqCst);
+                    }
+
                     // Send samples to visualization callback if available
                     if let Some(callback) = sample_callback_clone.lock().unwrap().as_ref() {
                         callback(&chunk);
@@ -142,6 +164,8 @@ impl AudioEngine for CpalAudioEngine {
             stop_flag,
             join,
             stream_keepalive,
+            frames_played,
+            config.sample_rate().0,
         );
 
         // Set up the sample callback forwarding

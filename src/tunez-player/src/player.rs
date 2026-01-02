@@ -63,6 +63,15 @@ impl Player {
         self.queue.current()
     }
 
+    /// Get current playback position
+    pub fn position(&self) -> std::time::Duration {
+        if let Some(audio) = &self.audio {
+            audio.position()
+        } else {
+            std::time::Duration::ZERO
+        }
+    }
+
     /// Set a callback to receive audio samples for visualization
     pub fn set_sample_callback<F>(&mut self, callback: F)
     where

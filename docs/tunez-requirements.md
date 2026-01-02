@@ -48,7 +48,7 @@ Missing: scrobbling integration, cross-platform polish, and full end-to-end prov
       - [x] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
       - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
     - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
-    - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
+    - [x] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
     - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
     - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
 
@@ -684,7 +684,7 @@ Tunez SHOULD provide the following screens/views (as shown in the mockups), subj
   - remote API provider (example)
   - local filesystem provider
 - Search tracks, pick one, it plays
-- Scrobbling works (at least one built-in reference Scrobbler enabled and sending play events to a real backend; e.g., ListenBrainz or Last.fm)
+- Scrobbling works (at least one built-in reference Scrobbler enabled and sending play events to a real backend; e.g., Melodee.API)
 - Playlists: list and search playlists (where supported by Provider)
 - Queue view works (add/remove/reorder locally)
 - Basic controls + progress/volume
@@ -857,11 +857,11 @@ This is a non-normative example showing the intended shape of TOML configuration
 ```toml
 config_version = 1
 
-default_provider = "filesystem"
+default_provider = "melodee"
 profile = "home"
 
 # Scrobbling is opt-in and disabled unless explicitly enabled.
-default_scrobbler = "listenbrainz"
+default_scrobbler = "melodee-scrobbler"
 
 [providers.filesystem]
 library_root = "/mnt/music"

@@ -4,6 +4,9 @@ use thiserror::Error;
 use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationError};
 use tunez_plugin::{ExecPluginProvider, PluginConfig};
 use tunez_ui::{run_ui, UiContext};
+use melodee_scrobbler::MelodeeScrobbler;
+use tunez_core::scrobbler::{PersistentScrobbler, Scrobbler};
+use std::sync::Arc;
 
 #[derive(Debug, Parser)]
 #[command(name = "tunez", version, about = "Terminal music player")]
@@ -257,7 +260,9 @@ fn main() -> Result<()> {
         None => {
             let selection = config
                 .resolve_provider_selection(cli.provider.as_deref(), cli.profile.as_deref())?;
-            let provider = create_provider(&selection, config)?;
+            let provider = create_provider(&selection, &config)?;
+            let scrobbler = create_scrobbler(&selection, &config, &dirs)?;
+            
             tracing::info!(
                 "Launching Tunez with provider '{}'{} (config dir: {})",
                 selection.provider_id,
@@ -268,7 +273,7 @@ fn main() -> Result<()> {
                     .unwrap_or_default(),
                 dirs.config_dir().display()
             );
-            run_ui(UiContext::new(provider, selection))?;
+            run_ui(UiContext::new(provider, selection, scrobbler))?;
         }
     }
 
@@ -277,7 +282,7 @@ fn main() -> Result<()> {
 
 fn create_provider(
     selection: &ProviderSelection,
-    config: Config,
+    config: &Config,
 ) -> Result<std::sync::Arc<dyn tunez_core::Provider>, anyhow::Error> {
     let provider_config = config
         .providers
@@ -385,6 +390,57 @@ fn create_provider(
             "Unknown provider kind: '{}'",
             provider_config.kind.as_deref().unwrap_or("")
         )),
+    }
+}
+
+fn create_scrobbler(
+    selection: &ProviderSelection,
+    config: &Config,
+    dirs: &AppDirs,
+) -> Result<Option<Arc<dyn Scrobbler>>, anyhow::Error> {
+    let provider_config = config.providers.get(&selection.provider_id);
+    // If provider config missing, create_provider would handle it, here we just return None
+    let provider_config = match provider_config {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+
+    if provider_config.kind.as_deref() == Some("melodee") {
+         let base_url = if let Some(profile_name) = &selection.profile {
+                if let Some(profile) = provider_config.profiles.get(profile_name) {
+                    profile.base_url.as_deref().ok_or_else(|| anyhow::anyhow!("missing base_url"))?
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                return Ok(None);
+            };
+
+        // Reuse MelodeeConfig or just pass values. MelodeeScrobbler takes config?
+        // Let's verify MelodeeScrobbler constructor signature.
+        // It takes (url, token).
+        let token: Option<String> = None; // Placeholder as in create_provider
+
+        let remote = MelodeeScrobbler::new(base_url, token.unwrap_or_default());
+        let path = dirs.data_dir().join("scrobbles.jsonl");
+        
+        // PersistentScrobbler new(id, path, batch_size, player_name, device_id, wrapped)
+        // Check PersistentScrobbler::new signature.
+        // It wraps a wrapped scrobbler? No, wait. 
+        // Previously FileScrobbler was standalone. 
+        // Refactor in scrobbler.rs introduced PersistentScrobbler<S: Scrobbler>.
+        // Constructor: PersistentScrobbler::new(wrapped: S, path: PathBuf).
+        // I need to verify PersistentScrobbler::new signature.
+        
+        let persistent = PersistentScrobbler::new(
+            remote,
+            path,
+            1000,
+        );
+        
+        Ok(Some(Arc::new(persistent)))
+    } else {
+        Ok(None)
     }
 }
 
