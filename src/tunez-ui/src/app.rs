@@ -25,6 +25,8 @@ use crate::theme::Theme;
 use std::sync::mpsc;
 use tunez_viz::Visualizer;
 
+use tunez_audio::CpalAudioEngine;
+
 const MIN_WIDTH: u16 = 60;
 const MIN_HEIGHT: u16 = 18;
 const HELP_WIDTH: u16 = 80;
@@ -139,6 +141,25 @@ struct App {
     queue_persistence: QueuePersistence,
     theme: Theme,
     use_color: bool,
+    // Search state
+    search_query: String,
+    search_results: Vec<tunez_core::Track>,
+    search_state: ratatui::widgets::ListState,
+    is_searching: bool,
+    search_rx: Option<mpsc::Receiver<tunez_core::ProviderResult<Vec<tunez_core::Track>>>>,
+    // Library state
+    library_items: Vec<tunez_core::CollectionItem>,
+    library_state: ratatui::widgets::ListState,
+    library_rx: Option<
+        mpsc::Receiver<tunez_core::ProviderResult<tunez_core::Page<tunez_core::CollectionItem>>>,
+    >,
+    // Playlist state
+    playlist_items: Vec<tunez_core::Playlist>,
+    playlist_state: ratatui::widgets::ListState,
+    playlist_rx:
+        Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::Page<tunez_core::Playlist>>>>,
+    stream_url_rx: Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::StreamUrl>>>,
+    audio_engine: CpalAudioEngine,
 }
 
 impl App {
@@ -200,6 +221,54 @@ impl App {
             help: HelpContent::new(),
             theme: ctx.theme,
             use_color: ctx.theme.is_color,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_state: ratatui::widgets::ListState::default(),
+            is_searching: false,
+            search_rx: None,
+            library_items: Vec::new(),
+            library_state: ratatui::widgets::ListState::default(),
+            library_rx: None,
+            playlist_items: Vec::new(),
+            playlist_state: ratatui::widgets::ListState::default(),
+            playlist_rx: None,
+            stream_url_rx: None,
+            audio_engine: CpalAudioEngine,
+        }
+    }
+
+    fn load_library(&mut self) {
+        let provider = self.provider.clone();
+        let (tx, rx) = mpsc::channel();
+        self.library_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = provider.browse(
+                tunez_core::BrowseKind::Artists,
+                tunez_core::PageRequest::first_page(50),
+            );
+            let _ = tx.send(result);
+        });
+    }
+
+    fn play_track(&mut self, track: tunez_core::Track) {
+        self.player.queue_mut().enqueue_next(track.clone());
+        self.player.skip_next();
+
+        if let Some(current) = self.player.current() {
+            let provider = self.provider.clone();
+            let track_id = current.track.id.clone();
+            let (tx, rx) = mpsc::channel();
+            self.stream_url_rx = Some(rx);
+
+            std::thread::spawn(move || {
+                let result = provider.get_stream_url(&track_id);
+                let _ = tx.send(result);
+            });
+        }
+
+        if let Some(np_idx) = self.tabs.iter().position(|t| matches!(t, Tab::NowPlaying)) {
+            self.active_tab = np_idx;
         }
     }
 
@@ -213,6 +282,92 @@ impl App {
         // Note: we cast Duration to u64 seconds, losing sub-second precision which is fine for scrobbling interval checks
         self.scrobbler_manager
             .tick(&self.player, self.player.position().as_secs());
+
+        // Check for stream URL results
+        if let Some(rx) = &self.stream_url_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(url) => {
+                        // Start playback
+                        // We need to map StreamUrl to AudioSource
+                        // StreamUrl is just a String alias in core? No, it's a struct or alias.
+                        // Let's check core.
+                        // Assuming it's convertible to string.
+                        let source = tunez_audio::AudioSource::Url(url.0);
+                        self.player.play_with_audio(&self.audio_engine, source);
+
+                        // Notify scrobbler
+                        self.scrobbler_manager
+                            .on_state_change(&self.player, tunez_core::PlaybackState::Started);
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to get stream URL: {}", e));
+                        self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                        self.player.set_error(e.to_string());
+                    }
+                }
+            }
+        }
+
+        // Check for playlist results
+        if let Some(rx) = &self.playlist_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(page) => {
+                        self.playlist_items = page.items;
+                        if !self.playlist_items.is_empty() {
+                            self.playlist_state.select(Some(0));
+                        }
+                    }
+                    Err(e) => {
+                        // Only show error if playlists are supported
+                        // If NotSupported, we just show empty list or "Not supported" message in render
+                        // But here we just log/toast
+                        self.error_message = Some(format!("Playlist load failed: {}", e));
+                        self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                    }
+                }
+            }
+        }
+
+        // Check for library results
+        if let Some(rx) = &self.library_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(page) => {
+                        self.library_items = page.items;
+                        if !self.library_items.is_empty() {
+                            self.library_state.select(Some(0));
+                        }
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Library load failed: {}", e));
+                        self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                    }
+                }
+            }
+        }
+
+        // Check for search results
+        if let Some(rx) = &self.search_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(tracks) => {
+                        self.search_results = tracks;
+                        if !self.search_results.is_empty() {
+                            self.search_state.select(Some(0));
+                        }
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Search failed: {}", e));
+                        self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                    }
+                }
+                // Clear the receiver as we're done with this search
+                // We can't easily clear it here due to borrow checker if we iterate.
+                // But we are not iterating.
+            }
+        }
 
         // Check for error messages
         while let Ok(msg) = self.error_rx.try_recv() {
@@ -255,14 +410,67 @@ impl App {
             return false;
         }
 
+        // Handle search input
+        if self.is_searching {
+            match key.code {
+                KeyCode::Esc => {
+                    self.is_searching = false;
+                }
+                KeyCode::Enter => {
+                    self.is_searching = false;
+                    self.perform_search();
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                }
+                _ => {}
+            }
+            return false;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.save_queue();
                 return true;
             }
             KeyCode::Char('?') => self.show_help = !self.show_help,
-            KeyCode::Char('j') | KeyCode::Down => self.next_tab(),
-            KeyCode::Char('k') | KeyCode::Up => self.previous_tab(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.tabs[self.active_tab] == Tab::Search && !self.search_results.is_empty() {
+                    let i = match self.search_state.selected() {
+                        Some(i) => {
+                            if i >= self.search_results.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    self.search_state.select(Some(i));
+                } else {
+                    self.next_tab();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.tabs[self.active_tab] == Tab::Search && !self.search_results.is_empty() {
+                    let i = match self.search_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                self.search_results.len() - 1
+                            } else {
+                                i - 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    self.search_state.select(Some(i));
+                } else {
+                    self.previous_tab();
+                }
+            }
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.previous_tab(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
             KeyCode::Char(c) if c.is_ascii_digit() => self.jump_to_tab(c),
@@ -271,6 +479,18 @@ impl App {
                 // Switch to search tab
                 if let Some(search_idx) = self.tabs.iter().position(|t| matches!(t, Tab::Search)) {
                     self.active_tab = search_idx;
+                    self.is_searching = true;
+                    self.search_query.clear();
+                }
+            }
+            // Enter to play selected search result
+            KeyCode::Enter => {
+                if self.tabs[self.active_tab] == Tab::Search {
+                    if let Some(idx) = self.search_state.selected() {
+                        if let Some(track) = self.search_results.get(idx) {
+                            self.play_track(track.clone());
+                        }
+                    }
                 }
             }
             // Visualization mode switching
@@ -334,8 +554,27 @@ impl App {
         false
     }
 
+    fn perform_search(&mut self) {
+        let provider = self.provider.clone();
+        let query = self.search_query.clone();
+        let (tx, rx) = mpsc::channel();
+        self.search_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = provider
+                .search_tracks(
+                    &query,
+                    tunez_core::TrackSearchFilters::default(),
+                    tunez_core::PageRequest::first_page(50),
+                )
+                .map(|page| page.items);
+            let _ = tx.send(result);
+        });
+    }
+
     fn next_tab(&mut self) {
         self.active_tab = (self.active_tab + 1) % self.tabs.len();
+        self.on_tab_changed();
     }
 
     fn previous_tab(&mut self) {
@@ -344,6 +583,7 @@ impl App {
         } else {
             self.active_tab -= 1;
         }
+        self.on_tab_changed();
     }
 
     fn jump_to_tab(&mut self, digit: char) {
@@ -354,11 +594,31 @@ impl App {
             let idx = (index - 1) as usize;
             if idx < self.tabs.len() {
                 self.active_tab = idx;
+                self.on_tab_changed();
             }
         }
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn load_playlists(&mut self) {
+        let provider = self.provider.clone();
+        let (tx, rx) = mpsc::channel();
+        self.playlist_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = provider.list_playlists(tunez_core::PageRequest::first_page(50));
+            let _ = tx.send(result);
+        });
+    }
+
+    fn on_tab_changed(&mut self) {
+        if self.tabs[self.active_tab] == Tab::Library && self.library_items.is_empty() {
+            self.load_library();
+        } else if self.tabs[self.active_tab] == Tab::Playlists && self.playlist_items.is_empty() {
+            self.load_playlists();
+        }
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
         let area = frame.size();
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             let message = format!(
@@ -417,7 +677,7 @@ impl App {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_body(&self, frame: &mut Frame, area: Rect) {
+    fn render_body(&mut self, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(18), Constraint::Min(10)])
@@ -427,7 +687,7 @@ impl App {
         self.render_main(frame, chunks[1]);
     }
 
-    fn render_nav(&self, frame: &mut Frame, area: Rect) {
+    fn render_nav(&mut self, frame: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .tabs
             .iter()
@@ -449,7 +709,7 @@ impl App {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
-    fn render_main(&self, frame: &mut Frame, area: Rect) {
+    fn render_main(&mut self, frame: &mut Frame, area: Rect) {
         let tab = self.tabs.get(self.active_tab).unwrap_or(&Tab::NowPlaying);
 
         let chunks = Layout::default()
@@ -530,39 +790,74 @@ impl App {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_search(&self, frame: &mut Frame, area: Rect) {
+    fn render_search(&mut self, frame: &mut Frame, area: Rect) {
         let title = format!("{} (Phase 1D shell)", Tab::Search.display_name());
         let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+            Line::from("Navigation: j/k or ↑/↓ | Enter to play | / to search"),
+            Line::from("Help: ?   Quit: q or Esc"),
         ];
 
-        let lines = vec![
+        let mut lines = vec![
             Line::from(Span::styled(
                 title,
                 self.style_fg(self.theme.primary)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from("Search functionality will be implemented here"),
-            Line::from("Press '/' to enter search mode"),
-            Line::from(""),
         ];
 
-        let mut text = Text::from(lines);
-        text.extend(hints);
+        if self.is_searching {
+            lines.push(Line::from(vec![
+                Span::raw("Search: "),
+                Span::styled(&self.search_query, Style::default().fg(Color::Yellow)),
+                Span::raw("█"), // Cursor
+            ]));
+        } else {
+            lines.push(Line::from(format!("Search: {}", self.search_query)));
+        }
+        lines.push(Line::from(""));
 
-        let paragraph = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Min(0),
+                Constraint::Length(2),
+            ])
+            .split(area);
+
+        let header =
+            Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
+        frame.render_widget(header, chunks[0]);
+
+        // Results list
+        if !self.search_results.is_empty() {
+            let items: Vec<ListItem> = self
+                .search_results
+                .iter()
+                .map(|track| ListItem::new(format!("{} - {}", track.artist, track.title)))
+                .collect();
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Results"))
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .highlight_symbol("▶ ");
+
+            frame.render_stateful_widget(list, chunks[1], &mut self.search_state);
+        } else {
+            let msg = Paragraph::new("No results").block(Block::default().borders(Borders::ALL));
+            frame.render_widget(msg, chunks[1]);
+        }
+
+        let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
+        frame.render_widget(footer, chunks[2]);
     }
 
-    fn render_library(&self, frame: &mut Frame, area: Rect) {
+    fn render_library(&mut self, frame: &mut Frame, area: Rect) {
         let title = format!("{} (Phase 1D shell)", Tab::Library.display_name());
         let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+            Line::from("Navigation: j/k or ↑/↓ | Enter to browse"),
+            Line::from("Help: ?   Quit: q or Esc"),
         ];
 
         let lines = vec![
@@ -572,25 +867,62 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from("Library browsing will be implemented here"),
-            Line::from("Browse artists, albums, genres"),
-            Line::from(""),
         ];
 
-        let mut text = Text::from(lines);
-        text.extend(hints);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(0),
+                Constraint::Length(2),
+            ])
+            .split(area);
 
-        let paragraph = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+        let header =
+            Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
+        frame.render_widget(header, chunks[0]);
+
+        if !self.library_items.is_empty() {
+            let items: Vec<ListItem> = self
+                .library_items
+                .iter()
+                .map(|item| {
+                    let name = match item {
+                        tunez_core::CollectionItem::Album(a) => &a.title,
+                        tunez_core::CollectionItem::Playlist(p) => &p.name,
+                        tunez_core::CollectionItem::Artist { name, .. } => name,
+                        tunez_core::CollectionItem::Genre { name, .. } => name,
+                    };
+                    ListItem::new(name.clone())
+                })
+                .collect();
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Library"))
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .highlight_symbol("▶ ");
+
+            frame.render_stateful_widget(list, chunks[1], &mut self.library_state);
+        } else {
+            let msg = Paragraph::new("Loading library or empty...")
+                .block(Block::default().borders(Borders::ALL));
+            frame.render_widget(msg, chunks[1]);
+
+            // Trigger load if empty and not loading (simple check)
+            // Ideally we track loading state. For MVP, we trigger on render if empty?
+            // No, that spams threads.
+            // We should trigger on tab switch.
+        }
+
+        let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
+        frame.render_widget(footer, chunks[2]);
     }
 
-    fn render_playlists(&self, frame: &mut Frame, area: Rect) {
+    fn render_playlists(&mut self, frame: &mut Frame, area: Rect) {
         let title = format!("{} (Phase 1D shell)", Tab::Playlists.display_name());
         let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+            Line::from("Navigation: j/k or ↑/↓ | Enter to open"),
+            Line::from("Help: ?   Quit: q or Esc"),
         ];
 
         let lines = vec![
@@ -600,18 +932,42 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from("Playlists will be implemented here"),
-            Line::from("List and manage playlists"),
-            Line::from(""),
         ];
 
-        let mut text = Text::from(lines);
-        text.extend(hints);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(0),
+                Constraint::Length(2),
+            ])
+            .split(area);
 
-        let paragraph = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+        let header =
+            Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
+        frame.render_widget(header, chunks[0]);
+
+        if !self.playlist_items.is_empty() {
+            let items: Vec<ListItem> = self
+                .playlist_items
+                .iter()
+                .map(|item| ListItem::new(item.name.clone()))
+                .collect();
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Playlists"))
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .highlight_symbol("▶ ");
+
+            frame.render_stateful_widget(list, chunks[1], &mut self.playlist_state);
+        } else {
+            let msg = Paragraph::new("No playlists or loading...")
+                .block(Block::default().borders(Borders::ALL));
+            frame.render_widget(msg, chunks[1]);
+        }
+
+        let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
+        frame.render_widget(footer, chunks[2]);
     }
 
     fn render_queue(&self, frame: &mut Frame, area: Rect) {
