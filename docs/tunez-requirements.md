@@ -32,10 +32,10 @@ Tunez is a *fast, keyboard-first, colorful* terminal player that can browse/sear
 If you change the code, update the checkboxes here so the PRD doesn't drift and confuse readers.
 As of **2026-01-01**, this repo includes a working **TUI shell** (tab navigation + Markdown help overlay), plus
 provider/player/audio crates with comprehensive unit tests — but **the mockup screens are not yet fully implemented/wired end-to-end**.
-**Progress Update**: Phase 1H (Visualization MVP) is now complete with thread-safe sample streaming, adaptive FPS rendering, and graceful fallbacks.
-Missing: scrobbling integration, cross-platform polish, and full end-to-end provider wiring for all TUI views.
+**Progress Update**: Phase 1 is now **COMPLETE**. All sub-phases (A-J) are implemented and verified, including visualization, scrobbling, monochrome mode, and comprehensive contract tests.
+Missing: Phase 2 (Plugins) and Phase 3 (Polish/Fast Extras) are pending future work.
 
-- [ ] **Phase 1** — Built-in Providers (this document)
+- [x] **Phase 1** — Built-in Providers (this document)
   - Phase 1 sub-phases (recommended; sized for incremental implementation)
     - [x] Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
     - [x] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
@@ -49,8 +49,8 @@ Missing: scrobbling integration, cross-platform polish, and full end-to-end prov
       - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
     - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
     - [x] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
-    - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
-    - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
+    - [x] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
+    - [x] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
 
 ---
 

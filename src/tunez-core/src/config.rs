@@ -18,6 +18,8 @@ pub struct Config {
     #[serde(default)]
     pub default_scrobbler: Option<String>,
     #[serde(default)]
+    pub theme: Option<String>,
+    #[serde(default)]
     pub logging: LoggingConfig,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -30,6 +32,7 @@ impl Default for Config {
             default_provider: None,
             profile: None,
             default_scrobbler: None,
+            theme: None,
             logging: LoggingConfig::default(),
             providers: BTreeMap::new(),
         }

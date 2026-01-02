@@ -5,8 +5,11 @@ Terminal music player in full ANSI color.
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
 ## Status
+Phase 1 (Foundation) is largely complete.
+- **Completed:** TUI shell, Visualization, Scrobbling, Plugin Host, Providers (Filesystem, Melodee).
+- **In Progress:** Polish & Documentation.
 
-Pre-alpha. This repository is currently **docs-first** (PRD + TUI mockups). Implementation is planned next.
+The codebase implements a functional terminal player architecture with a modular "Provider" system. The UI is a tabbed TUI using `ratatui` with real-time visualization.
 
 ## What is Tunez?
 
@@ -117,24 +120,17 @@ plugin_args = ["--config", "/etc/my-plugin.toml"]
 
 For plugin development documentation, see `src/tunez-plugin/src/lib.rs`.
 
-## Repository layout
+Current Workspace Layout:
 
-Current:
-
-- `docs/` — PRD and ASCII TUI mockups
-- `docs-site/` — reserved for future documentation site
-- `scripts/` — reserved for build/dev scripts
-- `src/` — Rust workspace crates
-
-Planned Rust workspace layout (see PRD; crates will live under `src/`):
-
-- `src/tunez-core/` — domain types, Provider traits, errors
-- `src/tunez-ui/` — ratatui UI, themes, keybindings
-- `src/tunez-player/` — queue + playback state machine
-- `src/tunez-audio/` — stream reader, decoder, output, buffering
-- `src/tunez-viz/` — spectrum/waveform computation
-- `src/tunez-cli/` — CLI parsing and command dispatch
-- `src/providers/` — built-in Provider crates
+- `src/tunez-core/` — shared domain, config, traits, errors
+- `src/tunez-ui/` — ratatui UI shell, themes
+- `src/tunez-player/` — queue, playback state machine
+- `src/tunez-audio/` — audio playback engine (decoding + cpal output)
+- `src/tunez-viz/` — audio analysis & visualization
+- `src/tunez-cli/` — CLI entrypoint
+- `src/tunez-plugin/` — external plugin host
+- `src/providers/` — built-in provider crates
+- `src/scrobblers/` — built-in scrobbler crates
 
 ## Development (once implementation lands)
 

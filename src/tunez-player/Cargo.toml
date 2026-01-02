@@ -16,5 +16,7 @@ tunez-core = { path = "../tunez-core" }
 tunez-audio = { path = "../tunez-audio" }
 
 [dev-dependencies]
+async-trait = "0.1"
 itertools = "0.13"
 tempfile = "3"
+

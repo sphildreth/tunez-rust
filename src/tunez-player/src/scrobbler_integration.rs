@@ -237,12 +237,13 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl Scrobbler for MockScrobbler {
         fn id(&self) -> &str {
             "mock"
         }
 
-        fn submit(&self, event: &ScrobbleEvent) -> ScrobblerResult<()> {
+        async fn submit(&self, event: &ScrobbleEvent) -> ScrobblerResult<()> {
             let fail = self.fail_count.load(Ordering::SeqCst);
             if fail > 0 {
                 self.fail_count.fetch_sub(1, Ordering::SeqCst);
@@ -267,8 +268,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scrobbles_on_state_change() {
+    #[tokio::test]
+    async fn scrobbles_on_state_change() {
         let scrobbler = Arc::new(MockScrobbler::new());
         let mut manager =
             ScrobblerManager::new(Some(scrobbler.clone()), "Tunez", Some("test-device".into()));
@@ -280,13 +281,16 @@ mod tests {
 
         manager.on_state_change(&player, ScrobblePlaybackState::Started);
 
+        // Allow background spawn to complete
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         let submissions = scrobbler.submissions();
         assert_eq!(submissions.len(), 1);
         assert_eq!(submissions[0].state, ScrobblePlaybackState::Started);
     }
 
-    #[test]
-    fn scrobbler_failure_does_not_panic() {
+    #[tokio::test]
+    async fn scrobbler_failure_does_not_panic() {
         let scrobbler = Arc::new(MockScrobbler::new());
         scrobbler.set_fail_next(5);
 
@@ -305,6 +309,9 @@ mod tests {
         // But tick immediately after on_state_change will call once more
         let _ticked = manager.tick(&player, 10);
 
+        // Allow background spawn to complete
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
         // We used at least 1 failure (from on_state_change)
         // tick may or may not trigger based on interval
         let remaining = scrobbler.fail_count.load(Ordering::SeqCst);
@@ -313,8 +320,8 @@ mod tests {
         // No panic is the main success criterion
     }
 
-    #[test]
-    fn disabled_scrobbler_does_not_submit() {
+    #[tokio::test]
+    async fn disabled_scrobbler_does_not_submit() {
         let scrobbler = Arc::new(MockScrobbler::new());
         let mut manager =
             ScrobblerManager::new(Some(scrobbler.clone()), "Tunez", Some("test-device".into()));
@@ -330,8 +337,8 @@ mod tests {
         assert!(submissions.is_empty());
     }
 
-    #[test]
-    fn scrobbling_is_disabled_by_default() {
+    #[tokio::test]
+    async fn scrobbling_is_disabled_by_default() {
         // Per PRD §4.10: Scrobbling MUST be disabled by default unless explicitly enabled
         let scrobbler = Arc::new(MockScrobbler::new());
         let mut manager =
@@ -358,8 +365,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_scrobbler_configured_is_safe() {
+    #[tokio::test]
+    async fn no_scrobbler_configured_is_safe() {
         let mut manager = ScrobblerManager::new(None, "Tunez", None);
 
         let mut player = Player::new();
@@ -374,8 +381,8 @@ mod tests {
         assert!(!manager.is_active());
     }
 
-    #[test]
-    fn error_callback_is_invoked_on_failure() {
+    #[tokio::test]
+    async fn error_callback_is_invoked_on_failure() {
         let scrobbler = Arc::new(MockScrobbler::new());
         scrobbler.set_fail_next(1);
 
@@ -394,6 +401,9 @@ mod tests {
         player.play();
 
         manager.on_state_change(&player, ScrobblePlaybackState::Started);
+
+        // Allow background spawn to complete
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert_eq!(error_count.load(Ordering::SeqCst), 1);
     }

@@ -1,4 +1,4 @@
-use crate::models::{PageRequest, Track};
+use crate::models::Track;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::fs;
@@ -133,7 +133,7 @@ impl<S: Scrobbler> PersistentScrobbler<S> {
     /// In a real implementation this would likely be called periodically.
     /// Here it is called on submit.
     pub async fn flush(&self) -> ScrobblerResult<()> {
-        let mut events = self.load()?;
+        let events = self.load()?;
         if events.is_empty() {
             return Ok(());
         }
@@ -200,7 +200,7 @@ impl<S: Scrobbler> Scrobbler for PersistentScrobbler<S> {
         // If flush succeeds, the file will be cleared/updated.
         
         // Re-load to get full queue including the one we just added
-        let mut queue = self.load()?;
+        let queue = self.load()?;
         let mut keep = Vec::new();
         let mut failed = false;
         

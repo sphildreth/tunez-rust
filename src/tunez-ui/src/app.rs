@@ -21,6 +21,9 @@ use tunez_player::{Player, PlayerState};
 use tunez_viz::VizMode;
 
 use crate::help::HelpContent;
+use crate::theme::Theme;
+use tunez_viz::Visualizer;
+use std::sync::mpsc;
 
 const MIN_WIDTH: u16 = 60;
 const MIN_HEIGHT: u16 = 18;
@@ -32,6 +35,7 @@ pub struct UiContext {
     pub provider: Arc<dyn Provider>,
     pub provider_selection: ProviderSelection,
     pub scrobbler: Option<Arc<dyn tunez_core::Scrobbler>>,
+    pub theme: Theme,
 }
 
 impl UiContext {
@@ -39,11 +43,13 @@ impl UiContext {
         provider: Arc<dyn Provider>,
         provider_selection: ProviderSelection,
         scrobbler: Option<Arc<dyn tunez_core::Scrobbler>>,
+        theme: Theme,
     ) -> Self {
         Self {
             provider,
             provider_selection,
             scrobbler,
+            theme,
         }
     }
 }
@@ -123,43 +129,65 @@ struct App {
     show_help: bool,
     help: HelpContent,
     visualizer: Arc<Mutex<tunez_viz::Visualizer>>,
+    error_rx: mpsc::Receiver<String>,
+    error_message: Option<String>,
+    error_timeout: Option<Instant>,
     scrobbler_manager: tunez_player::ScrobblerManager,
+    theme: Theme,
     use_color: bool,
 }
 
 impl App {
-    fn new(context: UiContext) -> Self {
-        let use_color = std::env::var("NO_COLOR").is_err();
-        let visualizer = Arc::new(Mutex::new(tunez_viz::Visualizer::new()));
-        
+    fn new(ctx: UiContext) -> Self {
+        let (tx, rx) = mpsc::channel();
+
+        // Initialize scrobbler manager
         let mut scrobbler_manager = tunez_player::ScrobblerManager::new(
-            context.scrobbler,
+            ctx.scrobbler,
             "Tunez",
-            None, // Device ID could be added to config later
+            None, 
         );
-        // Enable scrobbling if a scrobbler is present
+        // Enable scrobbling if configured
         scrobbler_manager.set_enabled(scrobbler_manager.is_active());
-        
-        // Set up sample callback for visualization
-        let viz_clone = visualizer.clone();
+        // Hook up error callback
+        {
+            let tx_clone = tx.clone();
+            scrobbler_manager.set_error_callback(move |msg: &str| {
+                let _ = tx_clone.send(msg.to_string());
+            });
+        }
+
         let mut player = Player::new();
-        player.set_sample_callback(move |samples| {
+        // player.set_error_callback(error_callback); // Player doesn't support this yet
+        
+        // Initialize visualizer with 2 channels (stereo) ? Visualizer::new() takes 0 args in lib.rs
+        // Wait, app.rs line 153 said `Visualizer::new(2)`. lib.rs said `pub fn new() -> Self`.
+        // I should use `Visualizer::new()`.
+        let visualizer = Arc::new(Mutex::new(Visualizer::new()));
+        let viz_clone = visualizer.clone();
+
+        // Register sample callback for visualization
+        player.set_sample_callback(move |samples: &[f32]| {
             if let Ok(viz) = viz_clone.lock() {
                 viz.add_samples(samples);
             }
         });
 
         Self {
-            provider: context.provider,
-            provider_selection: context.provider_selection,
+            provider: ctx.provider,
+            provider_selection: ctx.provider_selection,
             player,
             tabs: Tab::all(),
             active_tab: 0,
             show_help: false,
-            help: HelpContent::new(),
             visualizer,
-            use_color,
+            error_rx: rx,
+            error_message: None,
+            error_timeout: None,
             scrobbler_manager,
+            help: HelpContent::new(),
+            theme: ctx.theme,
+            use_color: ctx.theme.is_color,
         }
     }
 
@@ -172,6 +200,20 @@ impl App {
         // Update scrobbler progress
         // Note: we cast Duration to u64 seconds, losing sub-second precision which is fine for scrobbling interval checks
         self.scrobbler_manager.tick(&self.player, self.player.position().as_secs());
+
+        // Check for error messages
+        while let Ok(msg) = self.error_rx.try_recv() {
+            self.error_message = Some(msg);
+            self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+        }
+
+        // Clear error message if timeout expired
+        if let Some(timeout) = self.error_timeout {
+            if Instant::now() > timeout {
+                self.error_message = None;
+                self.error_timeout = None;
+            }
+        }
     }
 
     fn style_fg(&self, color: Color) -> Style {
@@ -332,10 +374,10 @@ impl App {
         let status = Line::from(vec![
             Span::styled(
                 "Tunez ",
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             ),
             Span::raw("▸ "),
-            Span::styled(provider, self.style_fg(Color::Green)),
+            Span::styled(provider, self.style_fg(self.theme.success)),
             Span::raw("  Net: OK  Scrobble: OFF (text labels shown for accessibility)"),
         ]);
 
@@ -365,8 +407,8 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title("Tabs"))
             .highlight_style(if self.use_color {
                 Style::default()
-                    .bg(Color::DarkGray)
-                    .fg(Color::White)
+                    .bg(self.theme.secondary)
+                    .fg(self.theme.text)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().add_modifier(Modifier::BOLD)
@@ -424,7 +466,7 @@ impl App {
         let mut lines = Vec::new();
         lines.push(Line::from(Span::styled(
             title,
-            self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));
 
@@ -432,7 +474,7 @@ impl App {
         if let Some(current) = self.player.current() {
             lines.push(Line::from(Span::styled(
                 format!("Now Playing: {} - {}", current.track.artist, current.track.title),
-                self.style_fg(Color::Green).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.success).add_modifier(Modifier::BOLD),
             )));
             if let Some(album) = &current.track.album {
                 lines.push(Line::from(format!("Album: {}", album)));
@@ -463,7 +505,7 @@ impl App {
         let lines = vec![
             Line::from(Span::styled(
                 title,
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from("Search functionality will be implemented here"),
@@ -490,7 +532,7 @@ impl App {
         let lines = vec![
             Line::from(Span::styled(
                 title,
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from("Library browsing will be implemented here"),
@@ -517,7 +559,7 @@ impl App {
         let lines = vec![
             Line::from(Span::styled(
                 title,
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from("Playlists will be implemented here"),
@@ -544,7 +586,7 @@ impl App {
         let mut lines = Vec::new();
         lines.push(Line::from(Span::styled(
             title,
-            self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));
 
@@ -586,7 +628,7 @@ impl App {
         let lines = vec![
             Line::from(Span::styled(
                 title,
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from("Lyrics display will be implemented here"),
@@ -612,7 +654,7 @@ impl App {
         let lines = vec![
             Line::from(Span::styled(
                 title,
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from("Configuration view will be implemented here"),
@@ -638,7 +680,7 @@ impl App {
         let lines = vec![
             Line::from(Span::styled(
                 title,
-                self.style_fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                self.style_fg(self.theme.primary).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from("Help content will be displayed here"),
@@ -884,7 +926,7 @@ mod tests {
             provider_id: "filesystem".into(),
             profile: Some("home".into()),
         };
-        let context = UiContext::new(provider, provider_selection);
+        let context = UiContext::new(provider, provider_selection, None, Theme::default());
         let mut app = App::new(context);
         app.jump_to_tab('3');
         assert_eq!(app.active_tab, 2);

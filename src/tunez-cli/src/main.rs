@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use thiserror::Error;
 use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationError};
 use tunez_plugin::{ExecPluginProvider, PluginConfig};
-use tunez_ui::{run_ui, UiContext};
+use tunez_ui::{run_ui, UiContext, Theme};
 use melodee_scrobbler::MelodeeScrobbler;
 use tunez_core::scrobbler::{PersistentScrobbler, Scrobbler};
 use std::sync::Arc;
@@ -273,7 +273,12 @@ fn main() -> Result<()> {
                     .unwrap_or_default(),
                 dirs.config_dir().display()
             );
-            run_ui(UiContext::new(provider, selection, scrobbler))?;
+            run_ui(UiContext::new(
+                provider,
+                selection,
+                scrobbler,
+                Theme::from_config(config.theme.as_deref()),
+            ))?;
         }
     }
 
