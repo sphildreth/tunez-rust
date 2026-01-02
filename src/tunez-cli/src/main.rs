@@ -224,7 +224,8 @@ impl PlaySelector {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let dirs = AppDirs::discover()?;

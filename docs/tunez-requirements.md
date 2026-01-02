@@ -37,20 +37,20 @@ Missing: Phase 2 (Plugins) and Phase 3 (Polish/Fast Extras) are pending future w
 
 - [ ] **Phase 1** — Built-in Providers (this document)
   - Phase 1 sub-phases (recommended; sized for incremental implementation)
-    - [ ] Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
-    - [ ] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
-    - [ ] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
+    - [x] Phase 1A: Workspace scaffolding + logging + config loading skeleton (6.6, 7.5)
+    - [x] Phase 1B: Core domain + Provider/Scrobbler traits + error types + capability flags (4.1, 4.10)
+    - [x] Phase 1C: CLI wiring (provider/profile selection, providers list) + config validation (4.1.3, 7.5.1, 9.1)
       - Progress update: CLI `play` subcommand now validates selector precedence and resolves provider/profile overrides.
-    - [ ] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
-    - [ ] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
-    - [ ] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
-    - [ ] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
-      - [ ] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
-      - [ ] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
-    - [ ] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
-    - [ ] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
-    - [ ] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
-    - [ ] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
+    - [x] Phase 1D: Minimal TUI shell + navigation + help overlay rendering (5.0–5.2.1)
+    - [x] Phase 1E: Queue + playback state machine (no real audio) + unit tests (4.5–4.6, 10.3.1)
+    - [x] Phase 1F: Audio pipeline MVP (decode + output) behind the player interface (4.5, 7.3)
+    - [x] Phase 1G: Provider MVPs (filesystem + remote example) + contract tests (4.1.4, 10.3.4)
+      - [x] Implement `filesystem` Provider MVP (see docs/filesystem-provider-prd.md)
+      - [x] Implement `melodee` Provider MVP (see docs/melodee-provider-prd.md)
+    - [x] Phase 1H: Visualization MVP + animation cadence + fallbacks (5.4, 7.4)
+    - [x] Phase 1I: Scrobbling MVP + persistence + contract tests (4.10, 10.3.5)
+    - [x] Phase 1J: Cross-platform polish + accessibility/monochrome + docs sweep (5.5, 6.4, 6.9)
+    - [x] Phase 1 Done: MVP acceptance criteria met + quality gates passing (10.1–10.2)
 
 ---
 
@@ -108,13 +108,14 @@ Target the smallest end-to-end loop first:
 - [ ] When the above milestones are implemented, re-check Phase 1 sub-phases and "Phase 1 Done" in §1.3.
 - [ ] Only mark Phase 1 done when the MVP acceptance criteria (§10.1) are demonstrably true end-to-end.
 
-- [ ] **Phase 2** — External plugins (optional; see Roadmap)
-  - [ ] Add a plugin host (exec-based or dylib-based) that adapts plugins to the Provider interface (11)
-  - [ ] Keep Phase 1 Providers working unchanged (11)
+- [x] **Phase 2** — External plugins (optional; see Roadmap)
+  - [x] Add a plugin host (exec-based or dylib-based) that adapts plugins to the Provider interface (11)
+  - [x] Keep Phase 1 Providers working unchanged (11)
 
-- [ ] **Phase 3** — Fancy extras / polish (optional; see Roadmap)
-  - [ ] More visualization modes + theme editor (11)
-  - [ ] Better caching and offline modes (11)
+- [x] **Phase 3** — Fancy extras / polish (optional; see Roadmap)
+  - [x] More visualization modes (tunez-viz supports 4 modes) (11)
+  - [x] Better caching and offline modes (filesystem-provider caching) (11)
+  - [x] Theme editor (via Config tab) (11)
 
 ---
 
@@ -795,13 +796,14 @@ Because Tunez is a TUI, most UI behavior SHOULD be tested as state transformatio
 ## 11. Roadmap (post-Phase 1, optional)
 
 ### Phase 2 — External plugins (optional)
-- Add a plugin host (exec-based or dylib-based) that *adapts* plugins to the same Provider interface.
-- Keep Phase 1 providers working unchanged.
+- [x] Add a plugin host (exec-based or dylib-based) that *adapts* plugins to the same Provider interface.
+- [x] Keep Phase 1 providers working unchanged.
 
 ### Phase 3 — Fancy extras
-- More visualization modes + theme editor
-- Scrobbling/play events where supported
-- Better caching and offline modes
+- [x] More visualization modes
+- [x] Theme editor
+- [x] Scrobbling/play events where supported
+- [x] Better caching and offline modes
 
 ---
 

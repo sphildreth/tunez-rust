@@ -14,3 +14,4 @@ tunez-core = { path = "../tunez-core" }
 tunez-player = { path = "../tunez-player" }
 tunez-audio = { path = "../tunez-audio", features = ["cpal-backend"] }
 tunez-viz = { path = "../tunez-viz" }
+tokio = { version = "1", features = ["rt", "sync", "macros"] }

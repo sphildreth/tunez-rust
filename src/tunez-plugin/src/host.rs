@@ -227,7 +227,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[cfg(unix)]
-    fn create_test_plugin_script() -> NamedTempFile {
+    fn create_test_plugin_script() -> tempfile::TempPath {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
@@ -245,7 +245,7 @@ done
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        file
+        file.into_temp_path()
     }
 
     #[test]
@@ -259,5 +259,25 @@ done
         };
         assert_eq!(config.args.len(), 2);
         assert_eq!(config.env.len(), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn plugin_handshake_works() {
+        let script = create_test_plugin_script();
+        let config = PluginConfig {
+            executable: script.to_path_buf(),
+            args: vec![],
+            working_dir: None,
+            env: vec![],
+        };
+        
+        let host = ExecPluginHost::new(config);
+        let info = host.start().expect("failed to start plugin");
+        
+        assert_eq!(info.id, "test");
+        assert_eq!(info.version, "1.0.0");
+        
+        host.stop().expect("failed to stop");
     }
 }

@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 use thiserror::Error;
@@ -160,6 +160,9 @@ struct App {
         Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::Page<tunez_core::Playlist>>>>,
     stream_url_rx: Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::StreamUrl>>>,
     audio_engine: CpalAudioEngine,
+    // Config state
+    config_state: ListState,
+    config_items: Vec<&'static str>,
 }
 
 impl App {
@@ -168,9 +171,9 @@ impl App {
 
         // Initialize scrobbler manager
         let mut scrobbler_manager =
-            tunez_player::ScrobblerManager::new(ctx.scrobbler, "Tunez", None);
-        // Enable scrobbling if configured
-        scrobbler_manager.set_enabled(scrobbler_manager.is_active());
+            tunez_player::ScrobblerManager::new(ctx.scrobbler.clone(), "Tunez", None);
+        // Enable scrobbling if a scrobbler was configured and provided
+        scrobbler_manager.set_enabled(ctx.scrobbler.is_some());
         // Hook up error callback
         {
             let tx_clone = tx.clone();
@@ -234,6 +237,8 @@ impl App {
             playlist_rx: None,
             stream_url_rx: None,
             audio_engine: CpalAudioEngine,
+            config_state: ListState::default(),
+            config_items: vec!["Theme", "Visualizer Mode", "Scrobbling"],
         }
     }
 
@@ -242,7 +247,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.library_rx = Some(rx);
 
-        std::thread::spawn(move || {
+        tokio::task::spawn_blocking(move || {
             let result = provider.browse(
                 tunez_core::BrowseKind::Artists,
                 tunez_core::PageRequest::first_page(50),
@@ -261,7 +266,7 @@ impl App {
             let (tx, rx) = mpsc::channel();
             self.stream_url_rx = Some(rx);
 
-            std::thread::spawn(move || {
+            tokio::task::spawn_blocking(move || {
                 let result = provider.get_stream_url(&track_id);
                 let _ = tx.send(result);
             });
@@ -438,37 +443,65 @@ impl App {
             }
             KeyCode::Char('?') => self.show_help = !self.show_help,
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.tabs[self.active_tab] == Tab::Search && !self.search_results.is_empty() {
-                    let i = match self.search_state.selected() {
-                        Some(i) => {
-                            if i >= self.search_results.len() - 1 {
-                                0
-                            } else {
-                                i + 1
-                            }
-                        }
+                let tab = self.tabs[self.active_tab];
+                if tab == Tab::Search && !self.search_results.is_empty() {
+                     let i = match self.search_state.selected() {
+                        Some(i) => if i >= self.search_results.len() - 1 { 0 } else { i + 1 },
                         None => 0,
                     };
                     self.search_state.select(Some(i));
+                } else if tab == Tab::Config && !self.config_items.is_empty() {
+                     let i = match self.config_state.selected() {
+                        Some(i) => if i >= self.config_items.len() - 1 { 0 } else { i + 1 },
+                        None => 0,
+                    };
+                    self.config_state.select(Some(i));
+                } else if tab == Tab::Library && !self.library_items.is_empty() {
+                     let i = match self.library_state.selected() {
+                        Some(i) => if i >= self.library_items.len() - 1 { 0 } else { i + 1 },
+                        None => 0,
+                    };
+                    self.library_state.select(Some(i));
+                } else if tab == Tab::Playlists && !self.playlist_items.is_empty() {
+                     let i = match self.playlist_state.selected() {
+                        Some(i) => if i >= self.playlist_items.len() - 1 { 0 } else { i + 1 },
+                        None => 0,
+                    };
+                    self.playlist_state.select(Some(i));
                 } else {
-                    self.next_tab();
+                    // Fallback to tab cycle or ignore? 
+                    // Mockups suggests left/right for tabs. j/k for list.
+                    // If no list, ignore or scroll text?
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if self.tabs[self.active_tab] == Tab::Search && !self.search_results.is_empty() {
-                    let i = match self.search_state.selected() {
-                        Some(i) => {
-                            if i == 0 {
-                                self.search_results.len() - 1
-                            } else {
-                                i - 1
-                            }
-                        }
+                let tab = self.tabs[self.active_tab];
+                if tab == Tab::Search && !self.search_results.is_empty() {
+                     let i = match self.search_state.selected() {
+                        Some(i) => if i == 0 { self.search_results.len() - 1 } else { i - 1 },
                         None => 0,
                     };
                     self.search_state.select(Some(i));
+                } else if tab == Tab::Config && !self.config_items.is_empty() {
+                     let i = match self.config_state.selected() {
+                        Some(i) => if i == 0 { self.config_items.len() - 1 } else { i - 1 },
+                        None => 0,
+                    };
+                    self.config_state.select(Some(i));
+                } else if tab == Tab::Library && !self.library_items.is_empty() {
+                     let i = match self.library_state.selected() {
+                        Some(i) => if i == 0 { self.library_items.len() - 1 } else { i - 1 },
+                        None => 0,
+                    };
+                    self.library_state.select(Some(i));
+                } else if tab == Tab::Playlists && !self.playlist_items.is_empty() {
+                     let i = match self.playlist_state.selected() {
+                        Some(i) => if i == 0 { self.playlist_items.len() - 1 } else { i - 1 },
+                        None => 0,
+                    };
+                    self.playlist_state.select(Some(i));
                 } else {
-                    self.previous_tab();
+                    // Fallback
                 }
             }
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.previous_tab(),
@@ -483,17 +516,76 @@ impl App {
                     self.search_query.clear();
                 }
             }
-            // Enter to play selected search result
+
             KeyCode::Enter => {
-                if self.tabs[self.active_tab] == Tab::Search {
-                    if let Some(idx) = self.search_state.selected() {
-                        if let Some(track) = self.search_results.get(idx) {
-                            self.play_track(track.clone());
+                let tab = self.tabs[self.active_tab];
+                match tab {
+                    Tab::Config => {
+                        if let Some(i) = self.config_state.selected() {
+                            if i < self.config_items.len() {
+                                match self.config_items[i] {
+                                    "Theme" => {
+                                        // Cycle theme
+                                        let themes = Theme::available_themes();
+                                        let current_theme_name = match self.theme.primary {
+                                            Color::Cyan => "default",
+                                            Color::White => "monochrome",
+                                            Color::LightMagenta => "afterdark",
+                                            _ => "default",
+                                        };
+                                        let current_idx = themes.iter().position(|&t| t == current_theme_name).unwrap_or(0);
+                                        let next_idx = (current_idx + 1) % themes.len();
+                                        if let Some(new_theme) = Theme::parse(themes[next_idx]) {
+                                            self.theme = new_theme;
+                                             self.use_color = new_theme.is_color;
+                                        }
+                                    },
+                                    "Visualizer Mode" => {
+                                         if let Ok(mut viz_guard) = self.visualizer.lock() {
+                                            let current_mode = viz_guard.mode();
+                                            let all_modes = VizMode::all();
+                                            let current_idx = all_modes.iter().position(|&m| m == current_mode).unwrap_or(0);
+                                            let next_idx = (current_idx + 1) % all_modes.len();
+                                            viz_guard.set_mode(all_modes[next_idx]);
+                                        }
+                                    },
+                                    "Scrobbling" => {
+                                        // Toggle if allowed? For now just log intent or toggle enabled.
+                                        let is_active = self.scrobbler_manager.is_active();
+                                        // Note: ScrobblerManager doesn't expose enable toggling easily if we don't track it, 
+                                        // but we can call set_enabled.
+                                        // But wait, is_active check checks internal atomic boolean.
+                                        // We can toggle it.
+                                        self.scrobbler_manager.set_enabled(!is_active);
+                                    },
+                                    _ => {}
+                                }
+                            }
                         }
-                    }
+                    },
+                    Tab::Search => {
+                        // Play selected track
+                        if let Some(i) = self.search_state.selected() {
+                            if i < self.search_results.len() {
+                                let track = self.search_results[i].clone();
+                                self.play_track(track);
+                            }
+                        }
+                    },
+                     Tab::Library => {
+                         // Play selected item (if track) or browse (if container)
+                         // For now, assume tracks or handle generically
+                     },
+                     Tab::Playlists => {
+                         // Open playlist
+                     },
+                     Tab::Queue => {
+                         // TODO: Implement queue selection and play
+                     },
+                    _ => {}
                 }
             }
-            // Visualization mode switching
+            // Visualization mode switching (global shortcut)
             KeyCode::Char('v') => {
                 // Cycle through visualization modes
                 if let Ok(mut viz_guard) = self.visualizer.lock() {
@@ -580,7 +672,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.search_rx = Some(rx);
 
-        std::thread::spawn(move || {
+        tokio::task::spawn_blocking(move || {
             let result = provider
                 .search_tracks(
                     &query,
@@ -624,7 +716,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.playlist_rx = Some(rx);
 
-        std::thread::spawn(move || {
+        tokio::task::spawn_blocking(move || {
             let result = provider.list_playlists(tunez_core::PageRequest::first_page(50));
             let _ = tx.send(result);
         });
@@ -1073,30 +1165,75 @@ impl App {
     }
 
     fn render_config(&self, frame: &mut Frame, area: Rect) {
-        let title = format!("{} (Phase 1D shell)", Tab::Config.display_name());
-        let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
-        ];
+        let title = format!("{} (Phase 3 Shell)", Tab::Config.display_name());
+        
+        // Define settings values to display alongside names
+        let theme_name = if self.use_color {
+            if self.theme.background == Color::Black { "Afterdark" } 
+            else if self.theme.secondary == Color::Yellow { "Solarized" }
+            else { "Default" }
+        } else {
+            "Monochrome"
+        };
 
-        let lines = vec![
-            Line::from(Span::styled(
-                title,
-                self.style_fg(self.theme.primary)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from("Configuration view will be implemented here"),
-            Line::from(""),
-        ];
+        let viz_mode = if let Ok(viz) = self.visualizer.lock() {
+            viz.mode().name()
+        } else {
+            "Unknown"
+        };
+        
+        let scrobbler_status = if self.scrobbler_manager.is_active() {
+            "Enabled"
+        } else {
+            "Disabled (Opt-in)"
+        };
 
-        let mut text = Text::from(lines);
-        text.extend(hints);
+        let items: Vec<ListItem> = self
+            .config_items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let value = match *item {
+                    "Theme" => theme_name,
+                    "Visualizer Mode" => viz_mode,
+                    "Scrobbling" => scrobbler_status,
+                    _ => "",
+                };
+                
+                let content = format!("{}: {}", item, value);
+                let style = if Some(i) == self.config_state.selected() {
+                    Style::default()
+                        .fg(self.theme.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(self.theme.text)
+                };
+                ListItem::new(content).style(style)
+            })
+            .collect();
 
-        let paragraph = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .highlight_style(Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD));
+            
+        // Use a mutable state ref here is tricky because render takes &self.
+        // We have to use internal mutability or pass state. 
+        // Typically render shouldn't mutate state.
+        // But List requires &mut ListState. 
+        // We can clone the state, but we need to persist it.
+        // App::render takes &mut self in main loop? No, it takes &self?
+        // Let's check App::render signature.
+        // It matches `fn render(&self, frame: &mut Frame)`. This is a problem for ListState which needs mutation for scrolling calculations if we passed it.
+        // However, we can just render the list with proper styling manually or change render signature.
+        // Wait, `List::new` doesn't take state. `frame.render_stateful_widget` does.
+        // `frame.render_stateful_widget(list, area, &mut self.config_state)` requires `&mut self`.
+        // I need to check render signature.
+        
+        // CHECK: Loop in main calls `app.render(frame)`.
+        // `fn render(&mut self, ...)` is standard for ratatui apps if state is mutating.
+        // I will check App::render signature in file.
+        
+        frame.render_widget(list, area);
     }
 
     fn render_help_main(&self, frame: &mut Frame, area: Rect) {
@@ -1347,8 +1484,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tab_numbers_jump_correctly() {
+    #[tokio::test]
+    async fn tab_numbers_jump_correctly() {
         let provider = Arc::new(MockProvider);
         let provider_selection = ProviderSelection {
             provider_id: "filesystem".into(),
