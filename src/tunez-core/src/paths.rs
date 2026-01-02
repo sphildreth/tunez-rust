@@ -9,6 +9,7 @@ pub struct AppDirs {
     data_dir: PathBuf,
     cache_dir: PathBuf,
     log_dir: PathBuf,
+    download_dir: PathBuf,
 }
 
 impl AppDirs {
@@ -16,11 +17,13 @@ impl AppDirs {
         let dirs = ProjectDirs::from(APP_QUALIFIER, APP_AUTHOR, APP_NAME)
             .ok_or(DirsError::MissingProjectDirs)?;
         let log_dir = dirs.data_dir().join("logs");
+        let download_dir = dirs.data_dir().join("downloads");
         Ok(Self {
             config_dir: dirs.config_dir().to_path_buf(),
             data_dir: dirs.data_dir().to_path_buf(),
             cache_dir: dirs.cache_dir().to_path_buf(),
             log_dir,
+            download_dir,
         })
     }
 
@@ -30,6 +33,7 @@ impl AppDirs {
             &self.data_dir,
             &self.cache_dir,
             &self.log_dir,
+            &self.download_dir,
         ] {
             std::fs::create_dir_all(dir).map_err(|source| DirsError::CreateDirectory {
                 path: dir.clone(),
@@ -53,6 +57,10 @@ impl AppDirs {
 
     pub fn log_dir(&self) -> &Path {
         &self.log_dir
+    }
+
+    pub fn download_dir(&self) -> &Path {
+        &self.download_dir
     }
 }
 

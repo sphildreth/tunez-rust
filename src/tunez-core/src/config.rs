@@ -23,6 +23,35 @@ pub struct Config {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
+    #[serde(default)]
+    pub cache: CacheConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Directory where downloaded tracks are stored
+    #[serde(default)]
+    pub download_dir: Option<String>,
+    /// Maximum cache size in bytes (0 = no limit)
+    #[serde(default = "default_max_cache_size")]
+    pub max_size_bytes: u64,
+    /// Maximum age of cached files in seconds (0 = no limit)
+    #[serde(default = "default_max_cache_age")]
+    pub max_age_seconds: u64,
+    /// Whether to automatically clean up old files on startup
+    #[serde(default = "default_auto_cleanup")]
+    pub auto_cleanup: bool,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            download_dir: None,
+            max_size_bytes: default_max_cache_size(),
+            max_age_seconds: default_max_cache_age(),
+            auto_cleanup: default_auto_cleanup(),
+        }
+    }
 }
 
 impl Default for Config {
@@ -35,6 +64,7 @@ impl Default for Config {
             theme: None,
             logging: LoggingConfig::default(),
             providers: BTreeMap::new(),
+            cache: CacheConfig::default(),
         }
     }
 }
@@ -272,6 +302,18 @@ fn default_max_log_file_size() -> u64 {
 }
 
 fn default_stdout_enabled() -> bool {
+    true
+}
+
+fn default_max_cache_size() -> u64 {
+    10 * 1024 * 1024 * 1024 // 10 GB
+}
+
+fn default_max_cache_age() -> u64 {
+    30 * 24 * 60 * 60 // 30 days
+}
+
+fn default_auto_cleanup() -> bool {
     true
 }
 

@@ -9,13 +9,19 @@
 - ?: Toggle this help overlay
 
 ## Playback
-- Space: Play / Pause (Phase 1E wiring)
+- Space: Play / Pause
 - n / p: Next / Previous track
-- ← / →: Seek (Phase 1E wiring)
+- ← / →: Seek
 
 ## Search
-- /: Focus search input (placeholder; provider wiring arrives later)
+- /: Focus search input
+- Enter: Play selected track
+
+## Visualization & Themes
+- v: Cycle visualization modes (Spectrum, Oscilloscope, VU Meter, Particles)
+- t: Cycle themes (Default, Monochrome, Afterdark, Solarized)
 
 ## Tips
 - This overlay is offline and Markdown-driven.
-- Keybindings will be configurable in later phases.
+- NO_COLOR environment variable is honored for accessibility.
+- Scrobbling is opt-in and disabled by default.

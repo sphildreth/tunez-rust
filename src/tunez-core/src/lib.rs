@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod config;
 pub mod logging;
 pub mod models;
@@ -8,8 +9,9 @@ pub mod redact;
 pub mod scrobbler;
 pub mod secrets;
 
+pub use cache::{CacheError, CacheManager, CachePolicy, CacheResult, CacheStats};
 pub use config::{
-    Config, ConfigError, LogLevel, LoggingConfig, ProviderConfig, ProviderProfile,
+    CacheConfig, Config, ConfigError, LogLevel, LoggingConfig, ProviderConfig, ProviderProfile,
     ProviderSelection, ValidationError,
 };
 pub use logging::{init_logging, LoggingError, LoggingGuard};

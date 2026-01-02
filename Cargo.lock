@@ -2864,6 +2864,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "thiserror 1.0.69",
+ "tracing",
  "tunez-audio",
  "tunez-core",
  "tunez-player",

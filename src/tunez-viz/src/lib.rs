@@ -324,11 +324,32 @@ impl Visualizer {
 
                 frame.render_widget(sparkline, area);
             }
-            VisualizationData::Particles(_) => {
-                // For particles, we'll just show a placeholder since ratatui Sparkline doesn't support particle systems
+            VisualizationData::Particles(particles) => {
+                // Convert particle positions to a sparkline representation
+                // We'll create a density map based on particle positions
+                let mut density = vec![0u64; area.width as usize];
+
+                for (x, _y, intensity) in particles {
+                    // Map x position (0-100) to bar index
+                    let idx = ((x as f32 / 100.0) * (area.width as f32 - 1.0)) as usize;
+                    if idx < density.len() {
+                        // Add intensity to density (scaled down)
+                        density[idx] = density[idx].saturating_add((intensity as u64 / 255) * 50);
+                    }
+                }
+
+                // If all zeros, show a small wave pattern
+                if density.iter().all(|&x| x == 0) {
+                    density = vec![20, 40, 60, 80, 100, 80, 60, 40, 20];
+                    while density.len() < area.width as usize {
+                        density.push(0);
+                    }
+                    density.truncate(area.width as usize);
+                }
+
                 let mut sparkline = Sparkline::default()
                     .block(Block::default().title(self.mode.name()))
-                    .data(&[50, 60, 70, 80, 90, 80, 70, 60, 50]);
+                    .data(&density);
 
                 // Apply color if supported
                 if use_color {

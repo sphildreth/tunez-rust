@@ -507,6 +507,26 @@ impl App {
                     viz_guard.set_mode(all_modes[next_idx]);
                 }
             }
+            // Theme switching
+            KeyCode::Char('t') => {
+                // Cycle through available themes
+                let themes = Theme::available_themes();
+                let current_theme_name = match self.theme.primary {
+                    Color::Cyan => "default",
+                    Color::White => "monochrome",
+                    Color::LightMagenta => "afterdark",
+                    _ => "default",
+                };
+                let current_idx = themes
+                    .iter()
+                    .position(|&t| t == current_theme_name)
+                    .unwrap_or(0);
+                let next_idx = (current_idx + 1) % themes.len();
+                if let Some(new_theme) = Theme::parse(themes[next_idx]) {
+                    self.theme = new_theme;
+                    tracing::info!("Switched to theme: {}", themes[next_idx]);
+                }
+            }
             // Playback controls
             KeyCode::Char(' ') => match self.player.state() {
                 tunez_player::PlayerState::Playing { .. } => {
