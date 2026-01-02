@@ -137,48 +137,48 @@ impl<S: Scrobbler> PersistentScrobbler<S> {
         if events.is_empty() {
             return Ok(());
         }
-        
+
         let mut remaining = Vec::new();
         // Try to send all events. If one fails, stop and keep the rest.
         // In a more robust system we might want to discard permanently broken events.
         for event in events {
             match self.inner.submit(&event).await {
-                Ok(_) => {}, // Success, drop event (it was "popped")
+                Ok(_) => {} // Success, drop event (it was "popped")
                 Err(e) => {
                     // Log error?
                     tracing::warn!("Failed to submit scrobble: {}", e);
                     remaining.push(event);
                     // Stop trying for now if network/auth fails
-                    // But if it's "Other", maybe we should continue? 
+                    // But if it's "Other", maybe we should continue?
                     // For safety, let's keep order strict.
-                    break; 
+                    break;
                 }
             }
         }
-        
+
         // Write back remaining events.
         // But wait, we iterated the list... we need to keep the ones we broke on PLUS
         // the ones we didn't even try.
-        // Actually the loop above consumes `events`. 
+        // Actually the loop above consumes `events`.
         // Logic fix:
         // We need to properly re-persist only what failed.
         // Since we broke the loop, `remaining` has the failed one.
         // But we need the REST of the original list too potentially. Used vec drain logic?
-        
-        // Let's reload to be safe against concurrency? 
+
+        // Let's reload to be safe against concurrency?
         // No, this struct isn't async-mutex protected internally (yet).
         // Let's assume single threaded flushing for Phase 1.
-        
+
         // Correct approach:
         // iterate `events` by index or similar?
         // Let's just re-write `remaining` + `unprocessed`.
         // Actually let's just do:
-        
+
         // events is consumed.
         // `remaining` contains the failed event.
         // We need to add all SUBSEQUENT events from `events` to `remaining` as well.
         // This loop logic is slightly flawed.
-        
+
         Ok(())
     }
 }
@@ -194,26 +194,26 @@ impl<S: Scrobbler> Scrobbler for PersistentScrobbler<S> {
         let mut events = self.load()?;
         events.push(event.clone());
         self.persist(events)?;
-        
+
         // Then try to flush ONLY if we can.
         // For Phase 1 simple logic: try to flush everything.
         // If flush succeeds, the file will be cleared/updated.
-        
+
         // Re-load to get full queue including the one we just added
         let queue = self.load()?;
         let mut keep = Vec::new();
         let mut failed = false;
-        
+
         for evt in queue {
             if failed {
                 keep.push(evt);
                 continue;
             }
-            
+
             match self.inner.submit(&evt).await {
                 Ok(_) => {
                     // Submitted successfully, do not add to 'keep'
-                },
+                }
                 Err(e) => {
                     tracing::warn!("Failed to submit scrobble '{}': {}", evt.track.title, e);
                     // Keep this event
@@ -222,12 +222,11 @@ impl<S: Scrobbler> Scrobbler for PersistentScrobbler<S> {
                 }
             }
         }
-        
+
         // Update persistence with what remains
         self.persist(keep)
     }
 }
-
 
 /// File-backed scrobbler that persists events locally for retry/backfill.
 /// This mock implementation is kept for existing tests but adapted to async trait.

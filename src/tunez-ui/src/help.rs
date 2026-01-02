@@ -7,6 +7,12 @@ pub struct HelpContent {
     lines: Vec<Line<'static>>,
 }
 
+impl Default for HelpContent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HelpContent {
     pub fn new() -> Self {
         Self {

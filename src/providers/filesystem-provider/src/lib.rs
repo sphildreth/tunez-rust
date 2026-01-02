@@ -2,7 +2,7 @@ mod cache;
 mod scan;
 mod tags;
 
-use cache::{MetadataCache, CacheConfig};
+use cache::{CacheConfig, MetadataCache};
 use scan::{scan_library_with_options, LibraryIndex, ScanOptions};
 use std::sync::{Arc, RwLock};
 use tunez_core::models::{

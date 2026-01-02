@@ -102,7 +102,8 @@ impl Player {
                 // Set up sample callback if one has been registered
                 if let Some(callback) = self.sample_callback.take() {
                     // Convert Box to Arc for the AudioHandle
-                    let arc_callback: Arc<dyn Fn(&[f32]) + Send + Sync> = Arc::new(callback);
+                    type CallbackType = dyn Fn(&[f32]) + Send + Sync;
+                    let arc_callback: Arc<CallbackType> = Arc::new(callback);
                     handle.set_sample_callback(arc_callback);
                 }
                 self.audio = Some(handle);

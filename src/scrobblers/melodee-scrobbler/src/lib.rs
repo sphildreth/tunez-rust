@@ -6,22 +6,53 @@ use tunez_core::scrobbler::{
     PlaybackState, ScrobbleEvent, Scrobbler, ScrobblerError, ScrobblerResult,
 };
 
+use std::sync::{Arc, RwLock};
+use tunez_core::secrets::CredentialStore;
+
 pub struct MelodeeScrobbler {
     client: Client,
     base_url: String,
-    token: String, // In real implementation, this might be a dynamic provider or keyring lookup
+    profile: Option<String>,
+    creds: CredentialStore,
+    token: Arc<RwLock<Option<String>>>,
 }
 
 impl MelodeeScrobbler {
-    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        profile: Option<String>,
+        initial_token: Option<String>,
+    ) -> Self {
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap(),
             base_url: base_url.into(),
-            token: token.into(),
+            profile,
+            creds: CredentialStore::new(),
+            token: Arc::new(RwLock::new(initial_token)),
         }
+    }
+
+    fn get_token(&self) -> Option<String> {
+        if let Ok(guard) = self.token.read() {
+            if let Some(token) = guard.as_ref() {
+                return Some(token.clone());
+            }
+        }
+
+        if let Ok(token) = self
+            .creds
+            .get_access_token("melodee", self.profile.as_deref())
+        {
+            if let Ok(mut guard) = self.token.write() {
+                *guard = Some(token.clone());
+            }
+            return Some(token);
+        }
+
+        None
     }
 }
 
@@ -63,14 +94,17 @@ impl Scrobbler for MelodeeScrobbler {
             // For now, let's assume if it looks like a UUID, we try.
             // But actually, `event.track.id` is the `TrackId` newtype.
             // Let's assume the ID string is the API key if provider is melodee.
-            
+
             // NOTE: Robust implementation would do search-and-match here.
-            tracing::debug!("Skipping non-melodee track for Melodee scrobbler: {:?}", event.track.id);
+            tracing::debug!(
+                "Skipping non-melodee track for Melodee scrobbler: {:?}",
+                event.track.id
+            );
             return Ok(());
         }
 
         let url = format!("{}/api/v1/scrobble", self.base_url.trim_end_matches('/'));
-        
+
         let payload = json!({
             "songId": event.track.id.0, // Assuming TrackId wraps the UUID
             "playerName": event.player_name,
@@ -82,19 +116,26 @@ impl Scrobbler for MelodeeScrobbler {
             "playedDuration": event.progress.position_seconds as f64
         });
 
-        let res = self.client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.token))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| ScrobblerError::Network { message: e.to_string() })?;
+        let mut request = self.client.post(&url).json(&payload);
+
+        if let Some(token) = self.get_token() {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let res = request.send().await.map_err(|e| ScrobblerError::Network {
+            message: e.to_string(),
+        })?;
 
         match res.status() {
-            StatusCode::OK | StatusCode::CREATED | StatusCode::ACCEPTED | StatusCode::NO_CONTENT => Ok(()),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ScrobblerError::Authentication {
-                message: "Invalid API token".into(),
-            }),
+            StatusCode::OK
+            | StatusCode::CREATED
+            | StatusCode::ACCEPTED
+            | StatusCode::NO_CONTENT => Ok(()),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(ScrobblerError::Authentication {
+                    message: "Invalid API token".into(),
+                })
+            }
             StatusCode::TOO_MANY_REQUESTS => Err(ScrobblerError::RateLimited {
                 message: "Rate limited".into(),
             }),

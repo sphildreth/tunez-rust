@@ -2,10 +2,10 @@
 //!
 //! Provides metadata caching to speed up library browsing and offline mode support.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
-use serde::{Deserialize, Serialize};
 use tunez_core::models::{Album, Playlist, Track};
 
 /// Cache entry with timestamp for expiration
@@ -76,7 +76,7 @@ impl MetadataCache {
 
         // Calculate approximate size
         let size = std::mem::size_of_val(&track) as u64;
-        
+
         if self.current_size + size > self.config.max_size_bytes {
             self.evict_old_entries();
         }
@@ -108,7 +108,7 @@ impl MetadataCache {
 
         // Calculate approximate size
         let size = std::mem::size_of_val(&album) as u64;
-        
+
         if self.current_size + size > self.config.max_size_bytes {
             self.evict_old_entries();
         }
@@ -140,7 +140,7 @@ impl MetadataCache {
 
         // Calculate approximate size
         let size = std::mem::size_of_val(&playlist) as u64;
-        
+
         if self.current_size + size > self.config.max_size_bytes {
             self.evict_old_entries();
         }
@@ -277,7 +277,7 @@ mod tests {
         let mut config = CacheConfig::default();
         config.max_age_seconds = 1; // 1 second for testing
         let mut cache = MetadataCache::new(config);
-        
+
         let path = PathBuf::from("/test/song.mp3");
         let track = Track {
             id: TrackId::new("test-id"),
@@ -291,7 +291,7 @@ mod tests {
 
         cache.add_track(path.clone(), track);
         thread::sleep(StdDuration::from_secs(2)); // Sleep longer than max age
-        
+
         let retrieved = cache.get_track(&path);
         assert_eq!(retrieved, None);
     }

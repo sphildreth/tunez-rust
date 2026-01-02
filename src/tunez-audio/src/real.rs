@@ -17,8 +17,8 @@ use symphonia::{
     default,
 };
 
-use crate::{AudioEngine, AudioError, AudioHandle, AudioResult, AudioSource, AudioState};
 use crate::engine::SampleCallback;
+use crate::{AudioEngine, AudioError, AudioHandle, AudioResult, AudioSource, AudioState};
 
 /// Audio engine backed by cpal + symphonia (local files only).
 #[derive(Debug, Default, Clone, Copy)]
@@ -57,7 +57,7 @@ impl AudioEngine for CpalAudioEngine {
         let state_clone = state.clone();
         let stop_clone = stop_flag.clone();
 
-        let _sample_rate = config.sample_rate().0 as usize;
+        let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
 
         // Interleave samples; if the source is mono, duplicate to all channels.
@@ -80,20 +80,20 @@ impl AudioEngine for CpalAudioEngine {
         // Wait, current impl captures `idx` by value (copy) if it's usize? No, closure moves `idx`.
         // `idx` is initialized at line 71: `let mut idx = 0usize;`.
         // `move |data...|` captures it.
-        
+
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _| {
                     // Generate samples for this chunk
                     let channels = 2; // Hardcoded? No, `channels` var at line 61. But we can't capture it easily if traits obscure it?
-                    // Re-capture `channels` from outer scope?
-                    // Wait, `channels` is defined at line 61. Closure `move` will capture it.
+                                      // Re-capture `channels` from outer scope?
+                                      // Wait, `channels` is defined at line 61. Closure `move` will capture it.
                     let channel_count = channels;
-                    
+
                     let mut chunk = Vec::with_capacity(data.len());
                     let mut frames_processed = 0;
-                    
+
                     for sample in data.iter_mut() {
                         if stop_clone.load(Ordering::SeqCst) || idx >= interleaved.len() {
                             *sample = 0.0;
@@ -106,10 +106,11 @@ impl AudioEngine for CpalAudioEngine {
                         idx += 1;
                         frames_processed += 1;
                     }
-                    
+
                     // Update frames played (frames = samples / channels)
                     if channel_count > 0 {
-                         frames_played_clone.fetch_add((frames_processed / channel_count) as u64, Ordering::SeqCst);
+                        frames_played_clone
+                            .fetch_add((frames_processed / channel_count) as u64, Ordering::SeqCst);
                     }
 
                     // Send samples to visualization callback if available
@@ -165,7 +166,7 @@ impl AudioEngine for CpalAudioEngine {
             join,
             stream_keepalive,
             frames_played,
-            config.sample_rate().0,
+            sample_rate,
         );
 
         // Set up the sample callback forwarding

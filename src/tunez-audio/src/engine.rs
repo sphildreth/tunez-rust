@@ -113,7 +113,7 @@ impl AudioHandle {
             local_keepalive: None,
             sample_callback: None,
             frames_played: Arc::new(std::sync::atomic::AtomicU64::new(0)), // Default for simulated
-            sample_rate: 0, // Default for simulated
+            sample_rate: 0,                                                // Default for simulated
         }
     }
 

@@ -16,10 +16,12 @@ use tunez_core::provider::{
 };
 use url::Url;
 
+use tunez_core::secrets::CredentialStore;
+
 #[derive(Clone)]
 pub struct MelodeeConfig {
     pub base_url: String,
-    pub access_token: Option<String>,
+    pub profile: Option<String>,
 }
 
 #[derive(Clone)]
@@ -28,6 +30,9 @@ pub struct MelodeeProvider {
     name: String,
     client: Client,
     base_url: Url,
+    profile: Option<String>,
+    creds: CredentialStore,
+    // Cache the token in memory to avoid hitting keyring on every request
     access_token: Arc<RwLock<Option<String>>>,
 }
 
@@ -43,20 +48,39 @@ impl MelodeeProvider {
             .map_err(|e| ProviderError::Other {
                 message: e.to_string(),
             })?;
+
         Ok(Self {
             id: "melodee".into(),
             name: "Melodee".into(),
             client,
             base_url,
-            access_token: Arc::new(RwLock::new(config.access_token)),
+            profile: config.profile,
+            creds: CredentialStore::new(),
+            access_token: Arc::new(RwLock::new(None)),
         })
     }
 
     fn auth_header(&self) -> Option<String> {
-        self.access_token
-            .read()
-            .ok()
-            .and_then(|guard| guard.clone())
+        // First check memory cache
+        if let Ok(guard) = self.access_token.read() {
+            if let Some(token) = guard.as_ref() {
+                return Some(token.clone());
+            }
+        }
+
+        // Then try keyring
+        if let Ok(token) = self
+            .creds
+            .get_access_token(&self.id, self.profile.as_deref())
+        {
+            // Cache it
+            if let Ok(mut guard) = self.access_token.write() {
+                *guard = Some(token.clone());
+            }
+            return Some(token);
+        }
+
+        None
     }
 
     fn capabilities() -> ProviderCapabilities {
@@ -389,7 +413,7 @@ mod tests {
 
         let provider = MelodeeProvider::new(MelodeeConfig {
             base_url,
-            access_token: None,
+            profile: None,
         })
         .expect("provider constructed");
 

@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use melodee_scrobbler::MelodeeScrobbler;
+use std::sync::Arc;
 use thiserror::Error;
+use tunez_core::scrobbler::{PersistentScrobbler, Scrobbler};
 use tunez_core::{init_logging, AppDirs, Config, ProviderSelection, ValidationError};
 use tunez_plugin::{ExecPluginProvider, PluginConfig};
-use tunez_ui::{run_ui, UiContext, Theme};
-use melodee_scrobbler::MelodeeScrobbler;
-use tunez_core::scrobbler::{PersistentScrobbler, Scrobbler};
-use std::sync::Arc;
+use tunez_ui::{run_ui, Theme, UiContext};
 
 #[derive(Debug, Parser)]
 #[command(name = "tunez", version, about = "Terminal music player")]
@@ -262,7 +262,7 @@ fn main() -> Result<()> {
                 .resolve_provider_selection(cli.provider.as_deref(), cli.profile.as_deref())?;
             let provider = create_provider(&selection, &config)?;
             let scrobbler = create_scrobbler(&selection, &config, &dirs)?;
-            
+
             tracing::info!(
                 "Launching Tunez with provider '{}'{} (config dir: {})",
                 selection.provider_id,
@@ -278,6 +278,7 @@ fn main() -> Result<()> {
                 selection,
                 scrobbler,
                 Theme::from_config(config.theme.as_deref()),
+                dirs.clone(),
             ))?;
         }
     }
@@ -339,11 +340,9 @@ fn create_provider(
                 return Err(anyhow::anyhow!("Profile required for melodee provider"));
             };
 
-            // For now, we'll use a placeholder access token - in a real implementation,
-            // this would come from secure storage (keyring) or be obtained via auth flow
             let melodee_config = melodee_provider::MelodeeConfig {
                 base_url: base_url.to_string(),
-                access_token: None,
+                profile: selection.profile.clone(),
             };
 
             let provider = melodee_provider::MelodeeProvider::new(melodee_config)?;
@@ -411,38 +410,32 @@ fn create_scrobbler(
     };
 
     if provider_config.kind.as_deref() == Some("melodee") {
-         let base_url = if let Some(profile_name) = &selection.profile {
-                if let Some(profile) = provider_config.profiles.get(profile_name) {
-                    profile.base_url.as_deref().ok_or_else(|| anyhow::anyhow!("missing base_url"))?
-                } else {
-                    return Ok(None);
-                }
+        let base_url = if let Some(profile_name) = &selection.profile {
+            if let Some(profile) = provider_config.profiles.get(profile_name) {
+                profile
+                    .base_url
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("missing base_url"))?
             } else {
                 return Ok(None);
-            };
+            }
+        } else {
+            return Ok(None);
+        };
 
-        // Reuse MelodeeConfig or just pass values. MelodeeScrobbler takes config?
-        // Let's verify MelodeeScrobbler constructor signature.
-        // It takes (url, token).
-        let token: Option<String> = None; // Placeholder as in create_provider
-
-        let remote = MelodeeScrobbler::new(base_url, token.unwrap_or_default());
+        let remote = MelodeeScrobbler::new(base_url, selection.profile.clone(), None);
         let path = dirs.data_dir().join("scrobbles.jsonl");
-        
+
         // PersistentScrobbler new(id, path, batch_size, player_name, device_id, wrapped)
         // Check PersistentScrobbler::new signature.
-        // It wraps a wrapped scrobbler? No, wait. 
-        // Previously FileScrobbler was standalone. 
+        // It wraps a wrapped scrobbler? No, wait.
+        // Previously FileScrobbler was standalone.
         // Refactor in scrobbler.rs introduced PersistentScrobbler<S: Scrobbler>.
         // Constructor: PersistentScrobbler::new(wrapped: S, path: PathBuf).
         // I need to verify PersistentScrobbler::new signature.
-        
-        let persistent = PersistentScrobbler::new(
-            remote,
-            path,
-            1000,
-        );
-        
+
+        let persistent = PersistentScrobbler::new(remote, path, 1000);
+
         Ok(Some(Arc::new(persistent)))
     } else {
         Ok(None)
