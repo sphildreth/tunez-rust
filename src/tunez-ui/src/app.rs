@@ -179,6 +179,10 @@ struct App {
     // Config state
     config_state: ListState,
     config_items: Vec<&'static str>,
+    // Pending initial play states
+    pending_search_play: bool,
+    pending_playlist_play: Option<String>,
+    pending_view_play: bool,
 }
 
 impl App {
@@ -264,7 +268,11 @@ impl App {
             current_lyrics_id: None,
             audio_engine: CpalAudioEngine,
             config_state: ListState::default(),
+
             config_items: vec!["Theme", "Visualizer Mode", "Scrobbling"],
+            pending_search_play: false,
+            pending_playlist_play: None,
+            pending_view_play: false,
         };
 
         // Handle initial play intent if provided
@@ -280,6 +288,33 @@ impl App {
             tunez_core::models::PlaySelector::Id { id } => {
                 let track_id = tunez_core::models::TrackId::new(id);
                 self.fetch_track_and_play(track_id);
+            }
+            tunez_core::models::PlaySelector::TrackSearch {
+                track,
+                artist,
+                album,
+            } => {
+                let mut query = track;
+                if let Some(a) = artist {
+                    query.push_str(&format!(" {}", a));
+                }
+                if let Some(a) = album {
+                    query.push_str(&format!(" {}", a));
+                }
+
+                // Switch to search tab, set query, trigger search, and set flag to play first result
+                if let Some(search_idx) = self.tabs.iter().position(|t| matches!(t, Tab::Search)) {
+                    self.active_tab = search_idx;
+                }
+                self.search_query = query;
+                self.is_searching = false; // Not interactive typing
+                self.pending_search_play = true;
+                self.perform_search();
+            }
+            tunez_core::models::PlaySelector::Playlist { name } => {
+                // Trigger playlist load and set flag to find and play
+                self.pending_playlist_play = Some(name);
+                self.load_playlists();
             }
             _ => {
                 // For now, simpler ones could be added later
@@ -337,7 +372,11 @@ impl App {
 
     fn play_track(&mut self, track: tunez_core::Track) {
         self.player.queue_mut().enqueue_next(track.clone());
-        self.player.skip_next();
+        if self.player.current().is_none() {
+            self.player.play();
+        } else {
+            self.player.skip_next();
+        }
 
         if let Some(current) = self.player.current() {
             let provider = self.provider.clone();
@@ -438,6 +477,21 @@ impl App {
                         if !self.playlist_items.is_empty() {
                             self.playlist_state.select(Some(0));
                         }
+
+                        // Handle pending playlist play
+                        if let Some(name) = self.pending_playlist_play.take() {
+                            if let Some(playlist) =
+                                self.playlist_items.iter().find(|p| p.name == name)
+                            {
+                                self.pending_view_play = true;
+                                self.load_playlist_tracks(playlist.id.clone(), playlist.name.clone());
+                            } else {
+                                self.error_message =
+                                    Some(format!("Playlist '{}' not found", name));
+                                self.error_timeout =
+                                    Some(Instant::now() + Duration::from_secs(5));
+                            }
+                        }
                     }
                     Err(e) => {
                         // Only show error if playlists are supported
@@ -445,6 +499,7 @@ impl App {
                         // But here we just log/toast
                         self.error_message = Some(format!("Playlist load failed: {}", e));
                         self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                        self.pending_playlist_play = None;
                     }
                 }
             }
@@ -476,11 +531,22 @@ impl App {
                         self.search_results = tracks;
                         if !self.search_results.is_empty() {
                             self.search_state.select(Some(0));
+                            // Handle pending search play
+                            if self.pending_search_play {
+                                self.pending_search_play = false;
+                                let track = self.search_results[0].clone();
+                                self.play_track(track);
+                            }
+                        } else if self.pending_search_play {
+                             self.pending_search_play = false;
+                             self.error_message = Some("No tracks found".to_string());
+                             self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
                         }
                     }
                     Err(e) => {
                         self.error_message = Some(format!("Search failed: {}", e));
                         self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                        self.pending_search_play = false;
                     }
                 }
                 // Clear the receiver as we're done with this search
@@ -499,10 +565,27 @@ impl App {
                             self.album_tracks_state.select(Some(0));
                         }
                         self.viewing_album_tracks = true;
+
+                        // Handle pending play (for playlists or albums if implemented)
+                        if self.pending_view_play {
+                            self.pending_view_play = false;
+                            
+                            // Replace queue with these tracks
+                            self.player.stop();
+                            self.player.queue_mut().clear();
+                            for track in &self.album_tracks {
+                                self.player.queue_mut().enqueue_back(track.clone());
+                            }
+                            // Play first
+                            if !self.album_tracks.is_empty() {
+                                self.play_queue_item(0);
+                            }
+                        }
                     }
                     Err(e) => {
                         self.error_message = Some(format!("Album tracks load failed: {}", e));
                         self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                        self.pending_view_play = false;
                     }
                 }
             }
@@ -578,6 +661,7 @@ impl App {
             KeyCode::Char('?') => self.show_help = !self.show_help,
             KeyCode::Char('j') | KeyCode::Down => {
                 let tab = self.tabs[self.active_tab];
+                let mut handled = false;
                 if tab == Tab::Search && !self.search_results.is_empty() {
                     let i = match self.search_state.selected() {
                         Some(i) => {
@@ -590,6 +674,7 @@ impl App {
                         None => 0,
                     };
                     self.search_state.select(Some(i));
+                    handled = true;
                 } else if tab == Tab::Config && !self.config_items.is_empty() {
                     let i = match self.config_state.selected() {
                         Some(i) => {
@@ -602,6 +687,7 @@ impl App {
                         None => 0,
                     };
                     self.config_state.select(Some(i));
+                    handled = true;
                 } else if tab == Tab::Library {
                     if self.viewing_album_tracks && !self.album_tracks.is_empty() {
                         let i = match self.album_tracks_state.selected() {
@@ -615,6 +701,7 @@ impl App {
                             None => 0,
                         };
                         self.album_tracks_state.select(Some(i));
+                        handled = true;
                     } else if !self.library_items.is_empty() {
                         let i = match self.library_state.selected() {
                             Some(i) => {
@@ -627,27 +714,43 @@ impl App {
                             None => 0,
                         };
                         self.library_state.select(Some(i));
+                        handled = true;
                     }
-                } else if tab == Tab::Playlists && !self.playlist_items.is_empty() {
-                    let i = match self.playlist_state.selected() {
-                        Some(i) => {
-                            if i >= self.playlist_items.len() - 1 {
-                                0
-                            } else {
-                                i + 1
-                            }
-                        }
-                        None => 0,
-                    };
-                    self.playlist_state.select(Some(i));
-                } else {
-                    // Fallback to tab cycle or ignore?
-                    // Mockups suggests left/right for tabs. j/k for list.
-                    // If no list, ignore or scroll text?
+                } else if tab == Tab::Playlists {
+                    if self.viewing_album_tracks && !self.album_tracks.is_empty() {
+                        let i = match self.album_tracks_state.selected() {
+                            Some(i) => (i + 1) % self.album_tracks.len(),
+                            None => 0,
+                        };
+                        self.album_tracks_state.select(Some(i));
+                        handled = true;
+                    } else if !self.playlist_items.is_empty() {
+                        let i = match self.playlist_state.selected() {
+                            Some(i) => (i + 1) % self.playlist_items.len(),
+                            None => 0,
+                        };
+                        self.playlist_state.select(Some(i));
+                        handled = true;
+                    }
+                } else if tab == Tab::Queue {
+                    let len = self.player.queue().len();
+                    if len > 0 {
+                        let i = match self.queue_state.selected() {
+                            Some(i) => (i + 1) % len,
+                            None => 0,
+                        };
+                        self.queue_state.select(Some(i));
+                        handled = true;
+                    }
+                }
+
+                if !handled {
+                    self.next_tab();
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 let tab = self.tabs[self.active_tab];
+                let mut handled = false;
                 if tab == Tab::Search && !self.search_results.is_empty() {
                     let i = match self.search_state.selected() {
                         Some(i) => {
@@ -660,6 +763,7 @@ impl App {
                         None => 0,
                     };
                     self.search_state.select(Some(i));
+                    handled = true;
                 } else if tab == Tab::Config && !self.config_items.is_empty() {
                     let i = match self.config_state.selected() {
                         Some(i) => {
@@ -672,6 +776,7 @@ impl App {
                         None => 0,
                     };
                     self.config_state.select(Some(i));
+                    handled = true;
                 } else if tab == Tab::Library {
                     if self.viewing_album_tracks && !self.album_tracks.is_empty() {
                         let i = match self.album_tracks_state.selected() {
@@ -685,6 +790,7 @@ impl App {
                             None => 0,
                         };
                         self.album_tracks_state.select(Some(i));
+                        handled = true;
                     } else if !self.library_items.is_empty() {
                         let i = match self.library_state.selected() {
                             Some(i) => {
@@ -697,21 +803,38 @@ impl App {
                             None => 0,
                         };
                         self.library_state.select(Some(i));
+                        handled = true;
                     }
-                } else if tab == Tab::Playlists && !self.playlist_items.is_empty() {
-                    let i = match self.playlist_state.selected() {
-                        Some(i) => {
-                            if i == 0 {
-                                self.playlist_items.len() - 1
-                            } else {
-                                i - 1
-                            }
-                        }
-                        None => 0,
-                    };
-                    self.playlist_state.select(Some(i));
-                } else {
-                    // Fallback
+                } else if tab == Tab::Playlists {
+                    if self.viewing_album_tracks && !self.album_tracks.is_empty() {
+                        let i = match self.album_tracks_state.selected() {
+                            Some(i) => (i + self.album_tracks.len() - 1) % self.album_tracks.len(),
+                            None => 0,
+                        };
+                        self.album_tracks_state.select(Some(i));
+                        handled = true;
+                    } else if !self.playlist_items.is_empty() {
+                        let i = match self.playlist_state.selected() {
+                            Some(i) => (i + self.playlist_items.len() - 1) % self.playlist_items.len(),
+                            None => 0,
+                        };
+                        self.playlist_state.select(Some(i));
+                        handled = true;
+                    }
+                } else if tab == Tab::Queue {
+                    let len = self.player.queue().len();
+                    if len > 0 {
+                        let i = match self.queue_state.selected() {
+                            Some(i) => (i + len - 1) % len,
+                            None => 0,
+                        };
+                        self.queue_state.select(Some(i));
+                        handled = true;
+                    }
+                }
+
+                if !handled {
+                    self.previous_tab();
                 }
             }
             KeyCode::Char('h') | KeyCode::BackTab => self.previous_tab(),
@@ -860,139 +983,51 @@ impl App {
                             }
                         }
                     }
-                Tab::Queue => match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        let len = self.player.queue().len();
-                        if len > 0 {
-                            let i = match self.queue_state.selected() {
-                                Some(i) => (i + 1) % len,
-                                None => 0,
-                            };
-                            self.queue_state.select(Some(i));
-                        }
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        let len = self.player.queue().len();
-                        if len > 0 {
-                            let i = match self.queue_state.selected() {
-                                Some(i) => (i + len - 1) % len,
-                                None => 0,
-                            };
-                            self.queue_state.select(Some(i));
-                        }
-                    }
-                    KeyCode::Enter => {
+                    Tab::Queue => {
                         if let Some(i) = self.queue_state.selected() {
                             self.play_queue_item(i);
                         }
                     }
-                    KeyCode::Char('d') => {
-                        if let Some(i) = self.queue_state.selected() {
-                            if let Some(item) = self.player.queue().items().get(i) {
-                                let id = item.id;
-                                self.player.queue_mut().remove(id);
-                                let len = self.player.queue().len();
-                                if len == 0 {
-                                    self.queue_state.select(None);
-                                } else if i >= len {
-                                    self.queue_state.select(Some(len - 1));
+                    Tab::Playlists => {
+                        if self.viewing_album_tracks {
+                            if let Some(i) = self.album_tracks_state.selected() {
+                                if i < self.album_tracks.len() {
+                                    let track = self.album_tracks[i].clone();
+                                    self.play_track(track);
                                 }
-                                self.save_queue();
+                            }
+                        } else if let Some(i) = self.playlist_state.selected() {
+                            if i < self.playlist_items.len() {
+                                let playlist = self.playlist_items[i].clone();
+                                self.load_playlist_tracks(playlist.id, playlist.name);
                             }
                         }
                     }
-                    KeyCode::Char('c') => {
-                        self.player.queue_mut().clear();
-                        self.queue_state.select(None);
-                        self.save_queue();
-                    }
-                    _ => {}
-                },
-                Tab::Playlists => {
-                    if self.viewing_album_tracks {
-                        match key.code {
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                let i = match self.album_tracks_state.selected() {
-                                    Some(i) => {
-                                        if i >= self.album_tracks.len() - 1 {
-                                            0
-                                        } else {
-                                            i + 1
-                                        }
-                                    }
-                                    None => 0,
-                                };
-                                self.album_tracks_state.select(Some(i));
-                            }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                let i = match self.album_tracks_state.selected() {
-                                    Some(i) => {
-                                        if i == 0 {
-                                            self.album_tracks.len() - 1
-                                        } else {
-                                            i - 1
-                                        }
-                                    }
-                                    None => 0,
-                                };
-                                self.album_tracks_state.select(Some(i));
-                            }
-                            KeyCode::Enter => {
-                                if let Some(i) = self.album_tracks_state.selected() {
-                                    if i < self.album_tracks.len() {
-                                        let track = self.album_tracks[i].clone();
-                                        self.play_track(track);
-                                    }
-                                }
-                            }
-                            KeyCode::Esc | KeyCode::Backspace => {
-                                self.viewing_album_tracks = false;
-                            }
-                            _ => {}
-                        }
-                    } else {
-                        match key.code {
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                let i = match self.playlist_state.selected() {
-                                    Some(i) => {
-                                        if i >= self.playlist_items.len() - 1 {
-                                            0
-                                        } else {
-                                            i + 1
-                                        }
-                                    }
-                                    None => 0,
-                                };
-                                self.playlist_state.select(Some(i));
-                            }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                let i = match self.playlist_state.selected() {
-                                    Some(i) => {
-                                        if i == 0 {
-                                            self.playlist_items.len() - 1
-                                        } else {
-                                            i - 1
-                                        }
-                                    }
-                                    None => 0,
-                                };
-                                self.playlist_state.select(Some(i));
-                            }
-                            KeyCode::Enter => {
-                                if let Some(i) = self.playlist_state.selected() {
-                                    if i < self.playlist_items.len() {
-                                        let playlist = self.playlist_items[i].clone();
-                                        self.load_playlist_tracks(playlist.id, playlist.name);
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
                     _ => {}
                 }
             }
+            // Queue specific physical actions
+            KeyCode::Char('d') if self.tabs[self.active_tab] == Tab::Queue => {
+                if let Some(i) = self.queue_state.selected() {
+                    if let Some(item) = self.player.queue().items().get(i) {
+                        let id = item.id;
+                        self.player.queue_mut().remove(id);
+                        let len = self.player.queue().len();
+                        if len == 0 {
+                            self.queue_state.select(None);
+                        } else if i >= len {
+                            self.queue_state.select(Some(len - 1));
+                        }
+                        self.save_queue();
+                    }
+                }
+            }
+            KeyCode::Char('c') if self.tabs[self.active_tab] == Tab::Queue => {
+                self.player.queue_mut().clear();
+                self.queue_state.select(None);
+                self.save_queue();
+            }
+
             // Visualization mode switching (global shortcut)
             KeyCode::Char('v') => {
                 // Cycle through visualization modes
