@@ -94,12 +94,16 @@ impl Queue {
     }
 
     pub fn select_first(&mut self) -> Option<&QueueItem> {
-        if self.items.is_empty() {
-            self.current = None;
-            return None;
+        self.select_index(0)
+    }
+
+    pub fn select_index(&mut self, index: usize) -> Option<&QueueItem> {
+        if index < self.items.len() {
+            self.current = Some(index);
+            self.current()
+        } else {
+            None
         }
-        self.current = Some(0);
-        self.current()
     }
 
     pub fn advance(&mut self) -> Option<&QueueItem> {

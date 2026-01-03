@@ -343,6 +343,15 @@ impl Provider for MelodeeProvider {
             })?;
         Ok(StreamUrl::new(resolved.to_string()))
     }
+
+    fn get_lyrics(&self, track_id: &TrackId) -> ProviderResult<String> {
+        let lyrics: models::Lyrics = self.send_get(
+            &format!("api/v1/songs/{}/lyrics", track_id.0),
+            Vec::new(),
+            Some(track_id.0.clone()),
+        )?;
+        Ok(lyrics.plain_text)
+    }
 }
 
 #[cfg(test)]

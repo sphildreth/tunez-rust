@@ -164,7 +164,7 @@ impl AudioEngine for CpalAudioEngine {
             state,
             stop_flag,
             join,
-            stream_keepalive,
+            stream_keepalive.clone(),
             frames_played,
             sample_rate,
         );
@@ -178,6 +178,43 @@ impl AudioEngine for CpalAudioEngine {
             }
         });
         handle.set_sample_callback(forwarding_callback);
+
+        // Set up audio control
+        struct CpalControl {
+            stream: Arc<Mutex<Box<dyn std::any::Any>>>,
+            frames_played: Arc<std::sync::atomic::AtomicU64>,
+            sample_rate: u32,
+        }
+        impl crate::engine::AudioControl for CpalControl {
+            fn pause(&self) -> AudioResult<()> {
+                let guard = self.stream.lock().unwrap();
+                if let Some(s) = guard.downcast_ref::<cpal::Stream>() {
+                    s.pause()
+                        .map_err(|e| crate::AudioError::Backend(e.to_string()))?;
+                }
+                Ok(())
+            }
+            fn resume(&self) -> AudioResult<()> {
+                let guard = self.stream.lock().unwrap();
+                if let Some(s) = guard.downcast_ref::<cpal::Stream>() {
+                    s.play()
+                        .map_err(|e| crate::AudioError::Backend(e.to_string()))?;
+                }
+                Ok(())
+            }
+            fn seek(&self, position: std::time::Duration) -> AudioResult<()> {
+                let frames = (position.as_secs_f64() * self.sample_rate as f64) as u64;
+                self.frames_played
+                    .store(frames, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        handle.set_control(Arc::new(CpalControl {
+            stream: stream_keepalive,
+            frames_played: frames_played.clone(),
+            sample_rate,
+        }));
 
         Ok(handle)
     }

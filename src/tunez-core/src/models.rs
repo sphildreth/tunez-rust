@@ -184,3 +184,24 @@ impl<T> Page<T> {
         Self { items, next: None }
     }
 }
+/// A selector for finding and playing music.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaySelector {
+    /// Play by stable ID.
+    Id { id: String },
+    /// Play a playlist by name.
+    Playlist { name: String },
+    /// Search for a track.
+    TrackSearch {
+        track: String,
+        artist: Option<String>,
+        album: Option<String>,
+    },
+    /// Search for an album.
+    AlbumSearch {
+        album: String,
+        artist: Option<String>,
+    },
+    /// Search for an artist.
+    ArtistSearch { artist: String },
+}

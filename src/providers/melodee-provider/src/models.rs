@@ -84,3 +84,8 @@ pub struct Album {
     #[serde(rename = "songsCount", default)]
     pub songs_count: Option<u32>,
 }
+#[derive(Debug, Deserialize)]
+pub struct Lyrics {
+    #[serde(rename = "plainText")]
+    pub plain_text: String,
+}

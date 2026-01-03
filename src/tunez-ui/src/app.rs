@@ -39,6 +39,7 @@ pub struct UiContext {
     pub scrobbler: Option<Arc<dyn tunez_core::Scrobbler>>,
     pub theme: Theme,
     pub dirs: AppDirs,
+    pub initial_play: Option<tunez_core::models::PlaySelector>,
 }
 
 impl UiContext {
@@ -55,6 +56,7 @@ impl UiContext {
             scrobbler,
             theme,
             dirs,
+            initial_play: None,
         }
     }
 }
@@ -141,6 +143,8 @@ struct App {
     queue_persistence: QueuePersistence,
     theme: Theme,
     use_color: bool,
+    // Queue state
+    queue_state: ratatui::widgets::ListState,
     // Search state
     search_query: String,
     search_results: Vec<tunez_core::Track>,
@@ -167,6 +171,10 @@ struct App {
     playlist_rx:
         Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::Page<tunez_core::Playlist>>>>,
     stream_url_rx: Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::StreamUrl>>>,
+    // Lyrics state
+    lyrics: Option<String>,
+    lyrics_rx: Option<mpsc::Receiver<tunez_core::ProviderResult<String>>>,
+    current_lyrics_id: Option<tunez_core::models::TrackId>,
     audio_engine: CpalAudioEngine,
     // Config state
     config_state: ListState,
@@ -232,6 +240,7 @@ impl App {
             help: HelpContent::new(),
             theme: ctx.theme,
             use_color: ctx.theme.is_color,
+            queue_state: ratatui::widgets::ListState::default(),
             search_query: String::new(),
             search_results: Vec::new(),
             search_state: ratatui::widgets::ListState::default(),
@@ -250,10 +259,52 @@ impl App {
             playlist_state: ratatui::widgets::ListState::default(),
             playlist_rx: None,
             stream_url_rx: None,
+            lyrics: None,
+            lyrics_rx: None,
+            current_lyrics_id: None,
             audio_engine: CpalAudioEngine,
             config_state: ListState::default(),
             config_items: vec!["Theme", "Visualizer Mode", "Scrobbling"],
+        };
+
+        // Handle initial play intent if provided
+        if let Some(selector) = ctx.initial_play {
+            app.handle_initial_play(selector);
         }
+
+        app
+    }
+
+    fn handle_initial_play(&mut self, selector: tunez_core::models::PlaySelector) {
+        match selector {
+            tunez_core::models::PlaySelector::Id { id } => {
+                let track_id = tunez_core::models::TrackId::new(id);
+                self.fetch_track_and_play(track_id);
+            }
+            _ => {
+                // For now, simpler ones could be added later
+                tracing::warn!("Initial play for selector {:?} not yet implemented", selector);
+            }
+        }
+    }
+
+    fn fetch_track_and_play(&mut self, track_id: tunez_core::models::TrackId) {
+        let provider = self.provider.clone();
+        let (tx, rx) = mpsc::channel();
+        self.stream_url_rx = Some(rx);
+
+        // We also need to get the track metadata to enqueue it
+        let track_id_clone = track_id.clone();
+        let provider_clone = provider.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(track) = provider_clone.get_track(&track_id_clone) {
+                // If successful, start getting stream URL
+                let result = provider_clone.get_stream_url(&track_id_clone);
+                let _ = tx.send(result);
+                // We should also find a way to update the player queue here, 
+                // but that requires access to the player in a non-blocking context.
+            }
+        });
     }
 
     fn load_library(&mut self) {
@@ -305,6 +356,24 @@ impl App {
         }
     }
 
+    fn play_queue_item(&mut self, index: usize) {
+        if let Some(item) = self.player.play_index(index) {
+            let provider = self.provider.clone();
+            let track_id = item.track.id.clone();
+            let (tx, rx) = mpsc::channel();
+            self.stream_url_rx = Some(rx);
+
+            tokio::task::spawn_blocking(move || {
+                let result = provider.get_stream_url(&track_id);
+                let _ = tx.send(result);
+            });
+
+            if let Some(np_idx) = self.tabs.iter().position(|t| matches!(t, Tab::NowPlaying)) {
+                self.active_tab = np_idx;
+            }
+        }
+    }
+
     fn tick(&mut self) {
         // Update visualizer animation phase
         if let Ok(mut viz) = self.visualizer.lock() {
@@ -322,16 +391,19 @@ impl App {
                 match result {
                     Ok(url) => {
                         // Start playback
-                        // We need to map StreamUrl to AudioSource
-                        // StreamUrl is just a String alias in core? No, it's a struct or alias.
-                        // Let's check core.
-                        // Assuming it's convertible to string.
                         let source = tunez_audio::AudioSource::Url(url.0);
                         self.player.play_with_audio(&self.audio_engine, source);
 
                         // Notify scrobbler
                         self.scrobbler_manager
                             .on_state_change(&self.player, tunez_core::PlaybackState::Started);
+                        
+                        // Clear lyrics if it's a new track and we're not on lyrics tab
+                        if self.tabs[self.active_tab] != Tab::Lyrics {
+                            self.lyrics = None;
+                        } else {
+                            self.load_lyrics();
+                        }
                     }
                     Err(e) => {
                         self.error_message = Some(format!("Failed to get stream URL: {}", e));
@@ -339,6 +411,21 @@ impl App {
                         self.player.set_error(e.to_string());
                     }
                 }
+            }
+        }
+
+        // Check for lyrics results
+        if let Some(rx) = &self.lyrics_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(lyrics) => {
+                        self.lyrics = Some(lyrics);
+                    }
+                    Err(_) => {
+                        self.lyrics = Some("No lyrics found for this track".to_string());
+                    }
+                }
+                self.lyrics_rx = None;
             }
         }
 
@@ -746,37 +833,163 @@ impl App {
                                             name,
                                             provider_id: _,
                                         } => {
-                                            // For now, just show a message - artist browsing could be implemented later
-                                            self.error_message = Some(format!(
-                                                "Artist browsing not yet implemented: {}",
-                                                name
-                                            ));
-                                            self.error_timeout =
-                                                Some(Instant::now() + Duration::from_secs(3));
+                                            // Search for tracks by this artist
+                                            self.search_query = format!("artist:{}", name);
+                                            self.perform_search();
+                                            if let Some(idx) =
+                                                self.tabs.iter().position(|t| matches!(t, Tab::Search))
+                                            {
+                                                self.active_tab = idx;
+                                            }
                                         }
                                         tunez_core::CollectionItem::Genre {
                                             name,
                                             provider_id: _,
                                         } => {
-                                            // For now, just show a message
-                                            self.error_message = Some(format!(
-                                                "Genre browsing not yet implemented: {}",
-                                                name
-                                            ));
-                                            self.error_timeout =
-                                                Some(Instant::now() + Duration::from_secs(3));
+                                            // Same for genre
+                                            self.search_query = format!("genre:{}", name);
+                                            self.perform_search();
+                                            if let Some(idx) =
+                                                self.tabs.iter().position(|t| matches!(t, Tab::Search))
+                                            {
+                                                self.active_tab = idx;
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    Tab::Playlists => {
-                        // Open playlist
+                Tab::Queue => match key.code {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let len = self.player.queue().len();
+                        if len > 0 {
+                            let i = match self.queue_state.selected() {
+                                Some(i) => (i + 1) % len,
+                                None => 0,
+                            };
+                            self.queue_state.select(Some(i));
+                        }
                     }
-                    Tab::Queue => {
-                        // TODO: Implement queue selection and play
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        let len = self.player.queue().len();
+                        if len > 0 {
+                            let i = match self.queue_state.selected() {
+                                Some(i) => (i + len - 1) % len,
+                                None => 0,
+                            };
+                            self.queue_state.select(Some(i));
+                        }
                     }
+                    KeyCode::Enter => {
+                        if let Some(i) = self.queue_state.selected() {
+                            self.play_queue_item(i);
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if let Some(i) = self.queue_state.selected() {
+                            if let Some(item) = self.player.queue().items().get(i) {
+                                let id = item.id;
+                                self.player.queue_mut().remove(id);
+                                let len = self.player.queue().len();
+                                if len == 0 {
+                                    self.queue_state.select(None);
+                                } else if i >= len {
+                                    self.queue_state.select(Some(len - 1));
+                                }
+                                self.save_queue();
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        self.player.queue_mut().clear();
+                        self.queue_state.select(None);
+                        self.save_queue();
+                    }
+                    _ => {}
+                },
+                Tab::Playlists => {
+                    if self.viewing_album_tracks {
+                        match key.code {
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let i = match self.album_tracks_state.selected() {
+                                    Some(i) => {
+                                        if i >= self.album_tracks.len() - 1 {
+                                            0
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.album_tracks_state.select(Some(i));
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                let i = match self.album_tracks_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 {
+                                            self.album_tracks.len() - 1
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.album_tracks_state.select(Some(i));
+                            }
+                            KeyCode::Enter => {
+                                if let Some(i) = self.album_tracks_state.selected() {
+                                    if i < self.album_tracks.len() {
+                                        let track = self.album_tracks[i].clone();
+                                        self.play_track(track);
+                                    }
+                                }
+                            }
+                            KeyCode::Esc | KeyCode::Backspace => {
+                                self.viewing_album_tracks = false;
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let i = match self.playlist_state.selected() {
+                                    Some(i) => {
+                                        if i >= self.playlist_items.len() - 1 {
+                                            0
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.playlist_state.select(Some(i));
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                let i = match self.playlist_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 {
+                                            self.playlist_items.len() - 1
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.playlist_state.select(Some(i));
+                            }
+                            KeyCode::Enter => {
+                                if let Some(i) = self.playlist_state.selected() {
+                                    if i < self.playlist_items.len() {
+                                        let playlist = self.playlist_items[i].clone();
+                                        self.load_playlist_tracks(playlist.id, playlist.name);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                     _ => {}
                 }
             }
@@ -867,16 +1080,16 @@ impl App {
                 }
                 self.save_queue();
             }
-            // Seek backward/forward with arrow keys (placeholder - requires audio engine seek support)
+            // Seek backward/forward with arrow keys
             KeyCode::Left => {
-                // TODO: Implement seek backward by 5s when audio engine supports it
-                self.error_message = Some("Seek backward not yet implemented".to_string());
-                self.error_timeout = Some(Instant::now() + Duration::from_secs(2));
+                let current_pos = self.player.position();
+                let new_pos = current_pos.saturating_sub(Duration::from_secs(5));
+                self.player.seek(new_pos);
             }
             KeyCode::Right => {
-                // TODO: Implement seek forward by 5s when audio engine supports it
-                self.error_message = Some("Seek forward not yet implemented".to_string());
-                self.error_timeout = Some(Instant::now() + Duration::from_secs(2));
+                let current_pos = self.player.position();
+                let new_pos = current_pos + Duration::from_secs(5);
+                self.player.seek(new_pos);
             }
             _ => {}
         }
@@ -939,6 +1152,23 @@ impl App {
         });
     }
 
+    fn load_playlist_tracks(&mut self, playlist_id: tunez_core::PlaylistId, playlist_name: String) {
+        let provider = self.provider.clone();
+        let (tx, rx) = mpsc::channel();
+        self.album_tracks_rx = Some(rx);
+        self.viewing_album_tracks = true;
+        self.album_tracks.clear();
+        self.album_tracks_state = ratatui::widgets::ListState::default();
+        self.current_album_id = None; // Not an album
+        self.current_album_name = Some(playlist_name);
+
+        tokio::task::spawn_blocking(move || {
+            let result = provider
+                .list_playlist_tracks(&playlist_id, tunez_core::PageRequest::first_page(100));
+            let _ = tx.send(result);
+        });
+    }
+
     fn on_tab_changed(&mut self) {
         if self.tabs[self.active_tab] == Tab::Library {
             // Reset album tracks view when switching to library tab
@@ -954,6 +1184,32 @@ impl App {
             }
         } else if self.tabs[self.active_tab] == Tab::Playlists && self.playlist_items.is_empty() {
             self.load_playlists();
+        } else if self.tabs[self.active_tab] == Tab::Lyrics {
+            if self.lyrics.is_none() || self.current_player_track_id() != self.current_lyrics_id {
+                self.load_lyrics();
+            }
+        }
+    }
+
+    fn current_player_track_id(&self) -> Option<tunez_core::models::TrackId> {
+        self.player.current().map(|c| c.track.id.clone())
+    }
+
+    fn load_lyrics(&mut self) {
+        if let Some(track_id) = self.current_player_track_id() {
+            let provider = self.provider.clone();
+            let (tx, rx) = mpsc::channel();
+            self.lyrics_rx = Some(rx);
+            self.current_lyrics_id = Some(track_id.clone());
+            self.lyrics = Some("Loading lyrics...".to_string());
+
+            tokio::task::spawn_blocking(move || {
+                let result = provider.get_lyrics(&track_id);
+                let _ = tx.send(result);
+            });
+        } else {
+            self.lyrics = Some("No track playing".to_string());
+            self.current_lyrics_id = None;
         }
     }
 
@@ -1376,11 +1632,11 @@ impl App {
         frame.render_widget(footer, chunks[2]);
     }
 
-    fn render_queue(&self, frame: &mut Frame, area: Rect) {
-        let title = format!("{} (Phase 1D shell)", Tab::Queue.display_name());
+    fn render_queue(&mut self, frame: &mut Frame, area: Rect) {
+        let title = format!("{} (Phase 1E functional)", Tab::Queue.display_name());
         let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
+            Line::from("Navigation: j/k or ↑/↓ | Enter to play | d to remove | c to clear"),
+            Line::from("Help: ?   Quit: q or Esc"),
         ];
 
         let mut lines = Vec::new();
@@ -1391,68 +1647,80 @@ impl App {
         )));
         lines.push(Line::from(""));
 
-        // Show queue items
-        lines.push(Line::from(format!(
-            "Queue: {} tracks",
-            self.player.queue().len()
-        )));
-        if !self.player.queue().is_empty() {
-            lines.push(Line::from(""));
-            for (i, item) in self.player.queue().items().iter().take(10).enumerate() {
-                let prefix = if Some(item.id) == self.player.current().map(|c| c.id) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(0),
+                Constraint::Length(2),
+            ])
+            .split(area);
+
+        let header =
+            Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
+        frame.render_widget(header, chunks[0]);
+
+        // Render queue list
+        let current_id = self.player.current().map(|c| c.id);
+        let items: Vec<ListItem> = self
+            .player
+            .queue()
+            .items()
+            .iter()
+            .map(|item| {
+                let prefix = if Some(item.id) == current_id {
                     "▶ "
                 } else {
                     "  "
                 };
-                lines.push(Line::from(format!(
-                    "{}{}. {} - {}",
-                    prefix,
-                    i + 1,
-                    item.track.artist,
-                    item.track.title
-                )));
-            }
-            if self.player.queue().len() > 10 {
-                lines.push(Line::from(format!(
-                    "... and {} more",
-                    self.player.queue().len() - 10
-                )));
-            }
+                ListItem::new(format!("{}{}. {} - {}", prefix, item.id.0, item.track.artist, item.track.title))
+            })
+            .collect();
+
+        if items.is_empty() {
+            let msg = Paragraph::new("Queue is empty").block(Block::default().borders(Borders::ALL));
+            frame.render_widget(msg, chunks[1]);
         } else {
-            lines.push(Line::from("Queue is empty"));
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Tracks"))
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .highlight_symbol("> ");
+
+            frame.render_stateful_widget(list, chunks[1], &mut self.queue_state);
         }
 
-        lines.push(Line::from(""));
-        lines.extend(hints);
-
-        let paragraph = Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+        let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
+        frame.render_widget(footer, chunks[2]);
     }
 
     fn render_lyrics(&self, frame: &mut Frame, area: Rect) {
-        let title = format!("{} (Phase 1D shell)", Tab::Lyrics.display_name());
-        let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | h/l or ←/→ | Tab/Shift+Tab | 1-8"),
-            Line::from("Help: ?   Quit: q or Esc   Tabs: Now Playing, Search, Library, Playlists, Queue, Lyrics, Config, Help"),
-        ];
+        let title = format!("{} (Phase 1G functional)", Tab::Lyrics.display_name());
+        let content = self
+            .lyrics
+            .as_deref()
+            .unwrap_or("No lyrics available for this track");
 
-        let lines = vec![
-            Line::from(Span::styled(
-                title,
-                self.style_fg(self.theme.primary)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from("Lyrics display will be implemented here"),
-            Line::from(""),
-        ];
+        let mut lines = Vec::new();
+        lines.push(Line::from(Span::styled(
+            title,
+            self.style_fg(self.theme.primary)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
 
-        let mut text = Text::from(lines);
-        text.extend(hints);
+        if let Some(current) = self.player.current() {
+            lines.push(Line::from(vec![
+                Span::styled("Track: ", Style::default().add_modifier(Modifier::DIM)),
+                Span::raw(format!("{} - {}", current.track.artist, current.track.title)),
+            ]));
+            lines.push(Line::from(""));
+        }
 
-        let paragraph = Paragraph::new(text)
+        for line in content.lines() {
+            lines.push(Line::from(line));
+        }
+
+        let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
         frame.render_widget(paragraph, area);

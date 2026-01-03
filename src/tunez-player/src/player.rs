@@ -74,8 +74,10 @@ impl Player {
 
     /// Seek by relative offset from current position
     /// TODO: Implement seek when audio engine supports it
-    pub fn seek(&mut self, _offset: std::time::Duration) {
-        // Audio engine does not yet support seeking
+    pub fn seek(&mut self, position: std::time::Duration) {
+        if let Some(audio) = &self.audio {
+            let _ = audio.seek(position);
+        }
     }
 
     /// Set a callback to receive audio samples for visualization
@@ -94,6 +96,11 @@ impl Player {
         self.state = PlayerState::Playing { id: current.id };
         self.stop_audio();
         self.queue.current()
+    }
+
+    pub fn play_index(&mut self, index: usize) -> Option<&QueueItem> {
+        self.queue.select_index(index)?;
+        self.play()
     }
 
     pub fn play_with_audio<E: AudioEngine>(
@@ -132,17 +139,24 @@ impl Player {
 
     pub fn pause(&mut self) -> bool {
         if let PlayerState::Playing { id } = self.state {
-            self.state = PlayerState::Paused { id };
-            self.stop_audio();
-            return true;
+            if let Some(audio) = &self.audio {
+                if audio.pause().is_ok() {
+                    self.state = PlayerState::Paused { id };
+                    return true;
+                }
+            }
         }
         false
     }
 
     pub fn resume(&mut self) -> bool {
         if let PlayerState::Paused { id } = self.state {
-            self.state = PlayerState::Playing { id };
-            return true;
+            if let Some(audio) = &self.audio {
+                if audio.resume().is_ok() {
+                    self.state = PlayerState::Playing { id };
+                    return true;
+                }
+            }
         }
         false
     }

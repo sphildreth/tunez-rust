@@ -42,9 +42,17 @@ pub enum AudioSource {
 pub enum AudioState {
     Idle,
     Playing,
+    Paused,
     Completed,
     Stopped,
     Error,
+}
+
+/// Control interface for backends to implement
+pub trait AudioControl: Send + Sync {
+    fn pause(&self) -> AudioResult<()> { Ok(()) }
+    fn resume(&self) -> AudioResult<()> { Ok(()) }
+    fn seek(&self, _position: Duration) -> AudioResult<()> { Ok(()) }
 }
 
 /// Handle representing an in-flight playback operation.
@@ -66,6 +74,8 @@ pub struct AudioHandle {
     frames_played: Arc<std::sync::atomic::AtomicU64>,
     /// Sample rate (frames per second)
     sample_rate: u32,
+    /// Control hook for backend-specific logic
+    control: Option<Arc<dyn AudioControl>>,
 }
 
 impl std::fmt::Debug for AudioHandle {
@@ -81,9 +91,43 @@ impl AudioHandle {
     pub fn set_sample_callback(&mut self, callback: SampleCallback) {
         self.sample_callback = Some(callback);
     }
-}
 
-impl AudioHandle {
+    pub fn set_control(&mut self, control: Arc<dyn AudioControl>) {
+        self.control = Some(control);
+    }
+
+    /// Pause playback
+    pub fn pause(&self) -> AudioResult<()> {
+        if let Some(control) = &self.control {
+            control.pause()?;
+        }
+        let mut guard = self.state.lock().unwrap();
+        if *guard == AudioState::Playing {
+            *guard = AudioState::Paused;
+        }
+        Ok(())
+    }
+
+    /// Resume playback
+    pub fn resume(&self) -> AudioResult<()> {
+        if let Some(control) = &self.control {
+            control.resume()?;
+        }
+        let mut guard = self.state.lock().unwrap();
+        if *guard == AudioState::Paused {
+            *guard = AudioState::Playing;
+        }
+        Ok(())
+    }
+
+    /// Seek to a specific position
+    pub fn seek(&self, position: Duration) -> AudioResult<()> {
+        if let Some(control) = &self.control {
+            control.seek(position)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn spawn_simulated(duration: Duration) -> Self {
         let state = Arc::new(Mutex::new(AudioState::Playing));
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -94,6 +138,13 @@ impl AudioHandle {
             let tick = Duration::from_millis(50);
             let mut elapsed = Duration::ZERO;
             while elapsed < duration && !stop_clone.load(Ordering::SeqCst) {
+                {
+                    let guard = state_clone.lock().unwrap();
+                    if *guard == AudioState::Paused {
+                        thread::sleep(tick);
+                        continue;
+                    }
+                }
                 thread::sleep(tick);
                 elapsed += tick;
             }
@@ -112,8 +163,9 @@ impl AudioHandle {
             keepalive: None,
             local_keepalive: None,
             sample_callback: None,
-            frames_played: Arc::new(std::sync::atomic::AtomicU64::new(0)), // Default for simulated
-            sample_rate: 0,                                                // Default for simulated
+            frames_played: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            sample_rate: 0,
+            control: None,
         }
     }
 
@@ -135,6 +187,7 @@ impl AudioHandle {
             sample_callback: None,
             frames_played,
             sample_rate,
+            control: None,
         }
     }
 

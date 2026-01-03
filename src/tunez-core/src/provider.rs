@@ -101,7 +101,15 @@ pub trait Provider: Send + Sync {
 
     /// Returns a playable stream URL for the given track.
     fn get_stream_url(&self, track_id: &TrackId) -> ProviderResult<StreamUrl>;
+
+    /// Returns the lyrics for the given track.
+    fn get_lyrics(&self, _track_id: &TrackId) -> ProviderResult<String> {
+        Err(ProviderError::NotSupported {
+            operation: "get_lyrics".into(),
+        })
+    }
 }
+
 
 /// Browse kinds supported by the core UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

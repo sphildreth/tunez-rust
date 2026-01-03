@@ -58,33 +58,13 @@ struct PlayCommand {
     autoplay: bool,
 }
 
+use tunez_core::models::PlaySelector;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlayIntent {
     provider: ProviderSelection,
     selector: PlaySelector,
     autoplay: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PlaySelector {
-    Id {
-        id: String,
-    },
-    Playlist {
-        name: String,
-    },
-    TrackSearch {
-        track: String,
-        artist: Option<String>,
-        album: Option<String>,
-    },
-    AlbumSearch {
-        album: String,
-        artist: Option<String>,
-    },
-    ArtistSearch {
-        artist: String,
-    },
 }
 
 #[derive(Debug, Error)]
@@ -240,23 +220,22 @@ async fn main() -> Result<()> {
         Some(Command::Play(play)) => {
             let intent =
                 play.into_intent(&config, cli.provider.as_deref(), cli.profile.as_deref())?;
-            let provider_label = format!(
-                "{}{}",
-                intent.provider.provider_id,
-                intent
-                    .provider
-                    .profile
-                    .as_deref()
-                    .map(|p| format!(" (profile '{p}')"))
-                    .unwrap_or_default()
+            
+            let selection = intent.provider.clone();
+            let provider = create_provider(&selection, &config)?;
+            let scrobbler = create_scrobbler(&selection, &config, &dirs)?;
+
+            let mut ctx = UiContext::new(
+                provider,
+                selection,
+                scrobbler,
+                Theme::from_config(config.theme.as_deref()),
+                dirs.clone(),
             );
-            let selector_description = intent.selector.describe();
-            let play_summary = format!(
-                "provider '{}': {} (autoplay: {})",
-                provider_label, selector_description, intent.autoplay
-            );
-            tracing::info!("Play request: {}", play_summary);
-            println!("Play request resolved: {}", play_summary);
+            ctx.initial_play = Some(intent.selector.clone());
+
+            tracing::info!("Launching Tunez with play intent: {:?}", intent.selector);
+            run_ui(ctx)?;
         }
         None => {
             let selection = config
