@@ -15,4 +15,4 @@ tracing = { workspace = true }
 
 # Optional real audio stack.
 cpal = { version = "0.15", optional = true }
-symphonia = { version = "0.5.3", optional = true }
+symphonia = { version = "0.5.3", optional = true, features = ["all"] }
