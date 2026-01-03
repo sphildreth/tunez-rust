@@ -115,6 +115,16 @@ impl Queue {
         }
     }
 
+    pub fn previous(&mut self) -> Option<&QueueItem> {
+        match self.current {
+            Some(idx) if idx > 0 => {
+                self.current = Some(idx - 1);
+                self.current()
+            }
+            _ => None,
+        }
+    }
+
     pub fn reset_current(&mut self) {
         self.current = None;
     }

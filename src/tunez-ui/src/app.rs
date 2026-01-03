@@ -153,6 +153,14 @@ struct App {
     library_rx: Option<
         mpsc::Receiver<tunez_core::ProviderResult<tunez_core::Page<tunez_core::CollectionItem>>>,
     >,
+    // Album tracks view state
+    album_tracks: Vec<tunez_core::Track>,
+    album_tracks_state: ratatui::widgets::ListState,
+    album_tracks_rx:
+        Option<mpsc::Receiver<tunez_core::ProviderResult<tunez_core::Page<tunez_core::Track>>>>,
+    viewing_album_tracks: bool,
+    current_album_id: Option<tunez_core::AlbumId>,
+    current_album_name: Option<String>,
     // Playlist state
     playlist_items: Vec<tunez_core::Playlist>,
     playlist_state: ratatui::widgets::ListState,
@@ -232,6 +240,12 @@ impl App {
             library_items: Vec::new(),
             library_state: ratatui::widgets::ListState::default(),
             library_rx: None,
+            album_tracks: Vec::new(),
+            album_tracks_state: ratatui::widgets::ListState::default(),
+            album_tracks_rx: None,
+            viewing_album_tracks: false,
+            current_album_id: None,
+            current_album_name: None,
             playlist_items: Vec::new(),
             playlist_state: ratatui::widgets::ListState::default(),
             playlist_rx: None,
@@ -249,9 +263,23 @@ impl App {
 
         tokio::task::spawn_blocking(move || {
             let result = provider.browse(
-                tunez_core::BrowseKind::Artists,
+                tunez_core::BrowseKind::Albums,
                 tunez_core::PageRequest::first_page(50),
             );
+            let _ = tx.send(result);
+        });
+    }
+
+    fn load_album_tracks(&mut self, album_id: tunez_core::AlbumId, album_name: String) {
+        let provider = self.provider.clone();
+        let (tx, rx) = mpsc::channel();
+        self.album_tracks_rx = Some(rx);
+        self.current_album_id = Some(album_id.clone());
+        self.current_album_name = Some(album_name);
+
+        tokio::task::spawn_blocking(move || {
+            let result =
+                provider.list_album_tracks(&album_id, tunez_core::PageRequest::first_page(50));
             let _ = tx.send(result);
         });
     }
@@ -374,6 +402,25 @@ impl App {
             }
         }
 
+        // Check for album tracks results
+        if let Some(rx) = &self.album_tracks_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(page) => {
+                        self.album_tracks = page.items;
+                        if !self.album_tracks.is_empty() {
+                            self.album_tracks_state.select(Some(0));
+                        }
+                        self.viewing_album_tracks = true;
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Album tracks load failed: {}", e));
+                        self.error_timeout = Some(Instant::now() + Duration::from_secs(5));
+                    }
+                }
+            }
+        }
+
         // Check for error messages
         while let Ok(msg) = self.error_rx.try_recv() {
             self.error_message = Some(msg);
@@ -445,31 +492,69 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => {
                 let tab = self.tabs[self.active_tab];
                 if tab == Tab::Search && !self.search_results.is_empty() {
-                     let i = match self.search_state.selected() {
-                        Some(i) => if i >= self.search_results.len() - 1 { 0 } else { i + 1 },
+                    let i = match self.search_state.selected() {
+                        Some(i) => {
+                            if i >= self.search_results.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
                         None => 0,
                     };
                     self.search_state.select(Some(i));
                 } else if tab == Tab::Config && !self.config_items.is_empty() {
-                     let i = match self.config_state.selected() {
-                        Some(i) => if i >= self.config_items.len() - 1 { 0 } else { i + 1 },
+                    let i = match self.config_state.selected() {
+                        Some(i) => {
+                            if i >= self.config_items.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
                         None => 0,
                     };
                     self.config_state.select(Some(i));
-                } else if tab == Tab::Library && !self.library_items.is_empty() {
-                     let i = match self.library_state.selected() {
-                        Some(i) => if i >= self.library_items.len() - 1 { 0 } else { i + 1 },
-                        None => 0,
-                    };
-                    self.library_state.select(Some(i));
+                } else if tab == Tab::Library {
+                    if self.viewing_album_tracks && !self.album_tracks.is_empty() {
+                        let i = match self.album_tracks_state.selected() {
+                            Some(i) => {
+                                if i >= self.album_tracks.len() - 1 {
+                                    0
+                                } else {
+                                    i + 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        self.album_tracks_state.select(Some(i));
+                    } else if !self.library_items.is_empty() {
+                        let i = match self.library_state.selected() {
+                            Some(i) => {
+                                if i >= self.library_items.len() - 1 {
+                                    0
+                                } else {
+                                    i + 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        self.library_state.select(Some(i));
+                    }
                 } else if tab == Tab::Playlists && !self.playlist_items.is_empty() {
-                     let i = match self.playlist_state.selected() {
-                        Some(i) => if i >= self.playlist_items.len() - 1 { 0 } else { i + 1 },
+                    let i = match self.playlist_state.selected() {
+                        Some(i) => {
+                            if i >= self.playlist_items.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
                         None => 0,
                     };
                     self.playlist_state.select(Some(i));
                 } else {
-                    // Fallback to tab cycle or ignore? 
+                    // Fallback to tab cycle or ignore?
                     // Mockups suggests left/right for tabs. j/k for list.
                     // If no list, ignore or scroll text?
                 }
@@ -477,26 +562,64 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => {
                 let tab = self.tabs[self.active_tab];
                 if tab == Tab::Search && !self.search_results.is_empty() {
-                     let i = match self.search_state.selected() {
-                        Some(i) => if i == 0 { self.search_results.len() - 1 } else { i - 1 },
+                    let i = match self.search_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                self.search_results.len() - 1
+                            } else {
+                                i - 1
+                            }
+                        }
                         None => 0,
                     };
                     self.search_state.select(Some(i));
                 } else if tab == Tab::Config && !self.config_items.is_empty() {
-                     let i = match self.config_state.selected() {
-                        Some(i) => if i == 0 { self.config_items.len() - 1 } else { i - 1 },
+                    let i = match self.config_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                self.config_items.len() - 1
+                            } else {
+                                i - 1
+                            }
+                        }
                         None => 0,
                     };
                     self.config_state.select(Some(i));
-                } else if tab == Tab::Library && !self.library_items.is_empty() {
-                     let i = match self.library_state.selected() {
-                        Some(i) => if i == 0 { self.library_items.len() - 1 } else { i - 1 },
-                        None => 0,
-                    };
-                    self.library_state.select(Some(i));
+                } else if tab == Tab::Library {
+                    if self.viewing_album_tracks && !self.album_tracks.is_empty() {
+                        let i = match self.album_tracks_state.selected() {
+                            Some(i) => {
+                                if i == 0 {
+                                    self.album_tracks.len() - 1
+                                } else {
+                                    i - 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        self.album_tracks_state.select(Some(i));
+                    } else if !self.library_items.is_empty() {
+                        let i = match self.library_state.selected() {
+                            Some(i) => {
+                                if i == 0 {
+                                    self.library_items.len() - 1
+                                } else {
+                                    i - 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        self.library_state.select(Some(i));
+                    }
                 } else if tab == Tab::Playlists && !self.playlist_items.is_empty() {
-                     let i = match self.playlist_state.selected() {
-                        Some(i) => if i == 0 { self.playlist_items.len() - 1 } else { i - 1 },
+                    let i = match self.playlist_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                self.playlist_items.len() - 1
+                            } else {
+                                i - 1
+                            }
+                        }
                         None => 0,
                     };
                     self.playlist_state.select(Some(i));
@@ -507,6 +630,17 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.previous_tab(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
             KeyCode::Char(c) if c.is_ascii_digit() => self.jump_to_tab(c),
+            // Backspace - go back from album tracks view
+            KeyCode::Backspace => {
+                if self.viewing_album_tracks {
+                    self.viewing_album_tracks = false;
+                    self.album_tracks.clear();
+                    self.album_tracks_state = ratatui::widgets::ListState::default();
+                    self.album_tracks_rx = None;
+                    self.current_album_id = None;
+                    self.current_album_name = None;
+                }
+            }
             // Search mode
             KeyCode::Char('/') => {
                 // Switch to search tab
@@ -533,36 +667,42 @@ impl App {
                                             Color::LightMagenta => "afterdark",
                                             _ => "default",
                                         };
-                                        let current_idx = themes.iter().position(|&t| t == current_theme_name).unwrap_or(0);
+                                        let current_idx = themes
+                                            .iter()
+                                            .position(|&t| t == current_theme_name)
+                                            .unwrap_or(0);
                                         let next_idx = (current_idx + 1) % themes.len();
                                         if let Some(new_theme) = Theme::parse(themes[next_idx]) {
                                             self.theme = new_theme;
-                                             self.use_color = new_theme.is_color;
+                                            self.use_color = new_theme.is_color;
                                         }
-                                    },
+                                    }
                                     "Visualizer Mode" => {
-                                         if let Ok(mut viz_guard) = self.visualizer.lock() {
+                                        if let Ok(mut viz_guard) = self.visualizer.lock() {
                                             let current_mode = viz_guard.mode();
                                             let all_modes = VizMode::all();
-                                            let current_idx = all_modes.iter().position(|&m| m == current_mode).unwrap_or(0);
+                                            let current_idx = all_modes
+                                                .iter()
+                                                .position(|&m| m == current_mode)
+                                                .unwrap_or(0);
                                             let next_idx = (current_idx + 1) % all_modes.len();
                                             viz_guard.set_mode(all_modes[next_idx]);
                                         }
-                                    },
+                                    }
                                     "Scrobbling" => {
                                         // Toggle if allowed? For now just log intent or toggle enabled.
                                         let is_active = self.scrobbler_manager.is_active();
-                                        // Note: ScrobblerManager doesn't expose enable toggling easily if we don't track it, 
+                                        // Note: ScrobblerManager doesn't expose enable toggling easily if we don't track it,
                                         // but we can call set_enabled.
                                         // But wait, is_active check checks internal atomic boolean.
                                         // We can toggle it.
                                         self.scrobbler_manager.set_enabled(!is_active);
-                                    },
+                                    }
                                     _ => {}
                                 }
                             }
                         }
-                    },
+                    }
                     Tab::Search => {
                         // Play selected track
                         if let Some(i) = self.search_state.selected() {
@@ -571,17 +711,72 @@ impl App {
                                 self.play_track(track);
                             }
                         }
-                    },
-                     Tab::Library => {
-                         // Play selected item (if track) or browse (if container)
-                         // For now, assume tracks or handle generically
-                     },
-                     Tab::Playlists => {
-                         // Open playlist
-                     },
-                     Tab::Queue => {
-                         // TODO: Implement queue selection and play
-                     },
+                    }
+                    Tab::Library => {
+                        if self.viewing_album_tracks {
+                            // Play selected track from album
+                            if let Some(i) = self.album_tracks_state.selected() {
+                                if i < self.album_tracks.len() {
+                                    let track = self.album_tracks[i].clone();
+                                    self.play_track(track);
+                                }
+                            }
+                        } else {
+                            // Browse selected item
+                            if let Some(i) = self.library_state.selected() {
+                                if i < self.library_items.len() {
+                                    match &self.library_items[i] {
+                                        tunez_core::CollectionItem::Album(album) => {
+                                            // Load album tracks
+                                            self.load_album_tracks(
+                                                album.id.clone(),
+                                                album.title.clone(),
+                                            );
+                                        }
+                                        tunez_core::CollectionItem::Playlist(playlist) => {
+                                            // For now, show a message - playlist browsing is handled in Playlists tab
+                                            self.error_message = Some(format!(
+                                                "Use Playlists tab for playlist: {}",
+                                                playlist.name
+                                            ));
+                                            self.error_timeout =
+                                                Some(Instant::now() + Duration::from_secs(3));
+                                        }
+                                        tunez_core::CollectionItem::Artist {
+                                            name,
+                                            provider_id: _,
+                                        } => {
+                                            // For now, just show a message - artist browsing could be implemented later
+                                            self.error_message = Some(format!(
+                                                "Artist browsing not yet implemented: {}",
+                                                name
+                                            ));
+                                            self.error_timeout =
+                                                Some(Instant::now() + Duration::from_secs(3));
+                                        }
+                                        tunez_core::CollectionItem::Genre {
+                                            name,
+                                            provider_id: _,
+                                        } => {
+                                            // For now, just show a message
+                                            self.error_message = Some(format!(
+                                                "Genre browsing not yet implemented: {}",
+                                                name
+                                            ));
+                                            self.error_timeout =
+                                                Some(Instant::now() + Duration::from_secs(3));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Tab::Playlists => {
+                        // Open playlist
+                    }
+                    Tab::Queue => {
+                        // TODO: Implement queue selection and play
+                    }
                     _ => {}
                 }
             }
@@ -659,7 +854,29 @@ impl App {
                 self.save_queue();
             }
             KeyCode::Char('p') => {
-                // Previous track logic would go here
+                // Scrobble stop for current track before skipping
+                if self.player.current().is_some() {
+                    self.scrobbler_manager
+                        .on_state_change(&self.player, tunez_core::PlaybackState::Stopped);
+                }
+                self.player.skip_previous();
+                // Scrobble start for previous track
+                if self.player.current().is_some() {
+                    self.scrobbler_manager
+                        .on_state_change(&self.player, tunez_core::PlaybackState::Started);
+                }
+                self.save_queue();
+            }
+            // Seek backward/forward with arrow keys (placeholder - requires audio engine seek support)
+            KeyCode::Left => {
+                // TODO: Implement seek backward by 5s when audio engine supports it
+                self.error_message = Some("Seek backward not yet implemented".to_string());
+                self.error_timeout = Some(Instant::now() + Duration::from_secs(2));
+            }
+            KeyCode::Right => {
+                // TODO: Implement seek forward by 5s when audio engine supports it
+                self.error_message = Some("Seek forward not yet implemented".to_string());
+                self.error_timeout = Some(Instant::now() + Duration::from_secs(2));
             }
             _ => {}
         }
@@ -723,8 +940,18 @@ impl App {
     }
 
     fn on_tab_changed(&mut self) {
-        if self.tabs[self.active_tab] == Tab::Library && self.library_items.is_empty() {
-            self.load_library();
+        if self.tabs[self.active_tab] == Tab::Library {
+            // Reset album tracks view when switching to library tab
+            self.viewing_album_tracks = false;
+            self.album_tracks.clear();
+            self.album_tracks_state = ratatui::widgets::ListState::default();
+            self.album_tracks_rx = None;
+            self.current_album_id = None;
+            self.current_album_name = None;
+
+            if self.library_items.is_empty() {
+                self.load_library();
+            }
         } else if self.tabs[self.active_tab] == Tab::Playlists && self.playlist_items.is_empty() {
             self.load_playlists();
         }
@@ -967,67 +1194,134 @@ impl App {
 
     fn render_library(&mut self, frame: &mut Frame, area: Rect) {
         let title = format!("{} (Phase 1D shell)", Tab::Library.display_name());
-        let hints = vec![
-            Line::from("Navigation: j/k or ↑/↓ | Enter to browse"),
-            Line::from("Help: ?   Quit: q or Esc"),
-        ];
 
-        let lines = vec![
-            Line::from(Span::styled(
-                title,
-                self.style_fg(self.theme.primary)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-        ];
+        if self.viewing_album_tracks {
+            // Render album tracks view
+            let hints = vec![
+                Line::from("Navigation: j/k or ↑/↓ | Enter to play | Backspace to return"),
+                Line::from("Help: ?   Quit: q or Esc"),
+            ];
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(0),
-                Constraint::Length(2),
-            ])
-            .split(area);
+            let mut lines = vec![
+                Line::from(Span::styled(
+                    title,
+                    self.style_fg(self.theme.primary)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
 
-        let header =
-            Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
-        frame.render_widget(header, chunks[0]);
+            if let Some(album_name) = &self.current_album_name {
+                lines.push(Line::from(Span::styled(
+                    format!("Album: {}", album_name),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+            }
+            lines.push(Line::from(""));
 
-        if !self.library_items.is_empty() {
-            let items: Vec<ListItem> = self
-                .library_items
-                .iter()
-                .map(|item| {
-                    let name = match item {
-                        tunez_core::CollectionItem::Album(a) => &a.title,
-                        tunez_core::CollectionItem::Playlist(p) => &p.name,
-                        tunez_core::CollectionItem::Artist { name, .. } => name,
-                        tunez_core::CollectionItem::Genre { name, .. } => name,
-                    };
-                    ListItem::new(name.clone())
-                })
-                .collect();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(0),
+                    Constraint::Length(2),
+                ])
+                .split(area);
 
-            let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title("Library"))
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-                .highlight_symbol("▶ ");
+            let header =
+                Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
+            frame.render_widget(header, chunks[0]);
 
-            frame.render_stateful_widget(list, chunks[1], &mut self.library_state);
+            if !self.album_tracks.is_empty() {
+                let items: Vec<ListItem> = self
+                    .album_tracks
+                    .iter()
+                    .map(|track| {
+                        let duration = track
+                            .duration_seconds
+                            .map_or(String::new(), |d| format!(" ({})", d));
+                        ListItem::new(format!("{} - {}{}", track.artist, track.title, duration))
+                    })
+                    .collect();
+
+                let list = List::new(items)
+                    .block(Block::default().borders(Borders::ALL).title("Tracks"))
+                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                    .highlight_symbol("▶ ");
+
+                frame.render_stateful_widget(list, chunks[1], &mut self.album_tracks_state);
+            } else {
+                let msg = Paragraph::new("Loading tracks...")
+                    .block(Block::default().borders(Borders::ALL));
+                frame.render_widget(msg, chunks[1]);
+            }
+
+            let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
+            frame.render_widget(footer, chunks[2]);
         } else {
-            let msg = Paragraph::new("Loading library or empty...")
-                .block(Block::default().borders(Borders::ALL));
-            frame.render_widget(msg, chunks[1]);
+            // Render main library view
+            let hints = vec![
+                Line::from("Navigation: j/k or ↑/↓ | Enter to browse albums"),
+                Line::from("Help: ?   Quit: q or Esc"),
+            ];
 
-            // Trigger load if empty and not loading (simple check)
-            // Ideally we track loading state. For MVP, we trigger on render if empty?
-            // No, that spams threads.
-            // We should trigger on tab switch.
+            let lines = vec![
+                Line::from(Span::styled(
+                    title,
+                    self.style_fg(self.theme.primary)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(2),
+                    Constraint::Min(0),
+                    Constraint::Length(2),
+                ])
+                .split(area);
+
+            let header =
+                Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL));
+            frame.render_widget(header, chunks[0]);
+
+            if !self.library_items.is_empty() {
+                let items: Vec<ListItem> = self
+                    .library_items
+                    .iter()
+                    .map(|item| {
+                        let name = match item {
+                            tunez_core::CollectionItem::Album(a) => &a.title,
+                            tunez_core::CollectionItem::Playlist(p) => &p.name,
+                            tunez_core::CollectionItem::Artist { name, .. } => name,
+                            tunez_core::CollectionItem::Genre { name, .. } => name,
+                        };
+                        ListItem::new(name.clone())
+                    })
+                    .collect();
+
+                let list = List::new(items)
+                    .block(Block::default().borders(Borders::ALL).title("Library"))
+                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                    .highlight_symbol("▶ ");
+
+                frame.render_stateful_widget(list, chunks[1], &mut self.library_state);
+            } else {
+                let msg = Paragraph::new("Loading library or empty...")
+                    .block(Block::default().borders(Borders::ALL));
+                frame.render_widget(msg, chunks[1]);
+
+                // Trigger load if empty and not loading (simple check)
+                // Ideally we track loading state. For MVP, we trigger on render if empty?
+                // No, that spams threads.
+                // We should trigger on tab switch.
+            }
+
+            let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
+            frame.render_widget(footer, chunks[2]);
         }
-
-        let footer = Paragraph::new(Text::from(hints)).wrap(Wrap { trim: true });
-        frame.render_widget(footer, chunks[2]);
     }
 
     fn render_playlists(&mut self, frame: &mut Frame, area: Rect) {
@@ -1166,12 +1460,16 @@ impl App {
 
     fn render_config(&self, frame: &mut Frame, area: Rect) {
         let title = format!("{} (Phase 3 Shell)", Tab::Config.display_name());
-        
+
         // Define settings values to display alongside names
         let theme_name = if self.use_color {
-            if self.theme.background == Color::Black { "Afterdark" } 
-            else if self.theme.secondary == Color::Yellow { "Solarized" }
-            else { "Default" }
+            if self.theme.background == Color::Black {
+                "Afterdark"
+            } else if self.theme.secondary == Color::Yellow {
+                "Solarized"
+            } else {
+                "Default"
+            }
         } else {
             "Monochrome"
         };
@@ -1181,7 +1479,7 @@ impl App {
         } else {
             "Unknown"
         };
-        
+
         let scrobbler_status = if self.scrobbler_manager.is_active() {
             "Enabled"
         } else {
@@ -1199,7 +1497,7 @@ impl App {
                     "Scrobbling" => scrobbler_status,
                     _ => "",
                 };
-                
+
                 let content = format!("{}: {}", item, value);
                 let style = if Some(i) == self.config_state.selected() {
                     Style::default()
@@ -1214,12 +1512,16 @@ impl App {
 
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD));
-            
+            .highlight_style(
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
+
         // Use a mutable state ref here is tricky because render takes &self.
-        // We have to use internal mutability or pass state. 
+        // We have to use internal mutability or pass state.
         // Typically render shouldn't mutate state.
-        // But List requires &mut ListState. 
+        // But List requires &mut ListState.
         // We can clone the state, but we need to persist it.
         // App::render takes &mut self in main loop? No, it takes &self?
         // Let's check App::render signature.
@@ -1228,11 +1530,11 @@ impl App {
         // Wait, `List::new` doesn't take state. `frame.render_stateful_widget` does.
         // `frame.render_stateful_widget(list, area, &mut self.config_state)` requires `&mut self`.
         // I need to check render signature.
-        
+
         // CHECK: Loop in main calls `app.render(frame)`.
         // `fn render(&mut self, ...)` is standard for ratatui apps if state is mutating.
         // I will check App::render signature in file.
-        
+
         frame.render_widget(list, area);
     }
 

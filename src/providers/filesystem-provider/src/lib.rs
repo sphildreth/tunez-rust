@@ -349,10 +349,11 @@ impl Provider for FilesystemProvider {
         paging: PageRequest,
     ) -> ProviderResult<Page<Track>> {
         let index = self.index.read().expect("index poisoned");
+        let album = self.get_album(album_id)?; // Get album to know artist and title
         let mut tracks = index
             .tracks
             .iter()
-            .filter(|t| t.album.as_ref() == Some(&album_id.0))
+            .filter(|t| t.artist == album.artist && t.album == Some(album.title.clone()))
             .cloned()
             .collect::<Vec<_>>();
         tracks.sort_by(|a, b| match (a.track_number, b.track_number) {

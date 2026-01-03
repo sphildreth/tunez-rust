@@ -72,6 +72,12 @@ impl Player {
         }
     }
 
+    /// Seek by relative offset from current position
+    /// TODO: Implement seek when audio engine supports it
+    pub fn seek(&mut self, _offset: std::time::Duration) {
+        // Audio engine does not yet support seeking
+    }
+
     /// Set a callback to receive audio samples for visualization
     pub fn set_sample_callback<F>(&mut self, callback: F)
     where
@@ -152,6 +158,15 @@ impl Player {
         let next_id = self.queue.current().map(|c| c.id)?;
         self.state = PlayerState::Buffering { id: next_id };
         self.state = PlayerState::Playing { id: next_id };
+        self.stop_audio();
+        self.queue.current()
+    }
+
+    pub fn skip_previous(&mut self) -> Option<&QueueItem> {
+        self.queue.previous()?;
+        let prev_id = self.queue.current().map(|c| c.id)?;
+        self.state = PlayerState::Buffering { id: prev_id };
+        self.state = PlayerState::Playing { id: prev_id };
         self.stop_audio();
         self.queue.current()
     }

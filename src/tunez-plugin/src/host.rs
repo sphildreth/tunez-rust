@@ -271,13 +271,13 @@ done
             working_dir: None,
             env: vec![],
         };
-        
+
         let host = ExecPluginHost::new(config);
         let info = host.start().expect("failed to start plugin");
-        
+
         assert_eq!(info.id, "test");
         assert_eq!(info.version, "1.0.0");
-        
+
         host.stop().expect("failed to stop");
     }
 }
