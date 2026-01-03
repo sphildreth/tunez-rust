@@ -205,3 +205,38 @@ pub enum PlaySelector {
     /// Search for an artist.
     ArtistSearch { artist: String },
 }
+
+impl PlaySelector {
+    pub fn describe(&self) -> String {
+        match self {
+            PlaySelector::Id { id } => format!("id={id}"),
+            PlaySelector::Playlist { name } => format!("playlist=\"{name}\""),
+            PlaySelector::TrackSearch {
+                track,
+                artist,
+                album,
+            } => {
+                let mut parts = vec![format!("track=\"{track}\"")];
+                if let Some(artist) = self.format_artist_inner(artist.as_deref()) {
+                    parts.push(artist);
+                }
+                if let Some(album) = album {
+                    parts.push(format!("album=\"{album}\""));
+                }
+                parts.join(", ")
+            }
+            PlaySelector::AlbumSearch { album, artist } => {
+                let mut parts = vec![format!("album=\"{album}\"")];
+                if let Some(artist) = self.format_artist_inner(artist.as_deref()) {
+                    parts.push(artist);
+                }
+                parts.join(", ")
+            }
+            PlaySelector::ArtistSearch { artist } => format!("artist=\"{artist}\""),
+        }
+    }
+
+    fn format_artist_inner(&self, artist: Option<&str>) -> Option<String> {
+        artist.map(|name| format!("artist=\"{name}\""))
+    }
+}

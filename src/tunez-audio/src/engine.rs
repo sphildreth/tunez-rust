@@ -49,7 +49,7 @@ pub enum AudioState {
 }
 
 /// Control interface for backends to implement
-pub trait AudioControl: Send + Sync {
+pub trait AudioControl {
     fn pause(&self) -> AudioResult<()> { Ok(()) }
     fn resume(&self) -> AudioResult<()> { Ok(()) }
     fn seek(&self, _position: Duration) -> AudioResult<()> { Ok(()) }
@@ -63,7 +63,7 @@ pub struct AudioHandle {
     /// Keeps audio resources alive until the handle is dropped.
     /// The stream is kept on the spawning thread (not sent).
     #[allow(dead_code)]
-    keepalive: Option<Box<dyn std::any::Any + Send>>,
+    keepalive: Option<Box<dyn std::any::Any>>,
     /// Non-Send keepalive slot for audio backends (e.g., cpal::Stream).
     /// Must be dropped on the same thread it was created.
     #[allow(dead_code)]
@@ -156,6 +156,9 @@ impl AudioHandle {
             }
         });
 
+        struct MockControl;
+        impl AudioControl for MockControl {}
+
         Self {
             state,
             stop_flag,
@@ -165,7 +168,7 @@ impl AudioHandle {
             sample_callback: None,
             frames_played: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             sample_rate: 0,
-            control: None,
+            control: Some(Arc::new(MockControl)),
         }
     }
 

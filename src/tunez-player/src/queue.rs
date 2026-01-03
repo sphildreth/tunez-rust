@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tunez_core::Track;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct QueueId(pub(crate) u64);
+pub struct QueueId(pub u64);
 
 impl QueueId {
     pub(crate) fn new(id: u64) -> Self {

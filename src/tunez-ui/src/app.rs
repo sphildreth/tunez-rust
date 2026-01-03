@@ -224,7 +224,7 @@ impl App {
             }
         });
 
-        Self {
+        let mut app = Self {
             provider: ctx.provider,
             provider_selection: ctx.provider_selection,
             player,
@@ -297,7 +297,7 @@ impl App {
         let track_id_clone = track_id.clone();
         let provider_clone = provider.clone();
         tokio::task::spawn_blocking(move || {
-            if let Ok(track) = provider_clone.get_track(&track_id_clone) {
+            if let Ok(_track) = provider_clone.get_track(&track_id_clone) {
                 // If successful, start getting stream URL
                 let result = provider_clone.get_stream_url(&track_id_clone);
                 let _ = tx.send(result);
@@ -714,8 +714,8 @@ impl App {
                     // Fallback
                 }
             }
-            KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.previous_tab(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
+            KeyCode::Char('h') | KeyCode::BackTab => self.previous_tab(),
+            KeyCode::Char('l') | KeyCode::Tab => self.next_tab(),
             KeyCode::Char(c) if c.is_ascii_digit() => self.jump_to_tab(c),
             // Backspace - go back from album tracks view
             KeyCode::Backspace => {

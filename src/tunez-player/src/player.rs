@@ -328,7 +328,8 @@ mod tests {
     fn pause_and_resume_transitions() {
         let mut player = Player::new();
         player.queue_mut().enqueue_back(track("one"));
-        player.play();
+        let engine = tunez_audio::NullAudioEngine;
+        player.play_with_audio(&engine, AudioSource::Url("test".into()));
 
         assert!(player.pause());
         assert!(matches!(player.state(), PlayerState::Paused { .. }));

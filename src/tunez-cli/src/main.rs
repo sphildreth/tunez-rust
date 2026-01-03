@@ -169,40 +169,7 @@ impl PlayCommand {
     }
 }
 
-impl PlaySelector {
-    fn describe(&self) -> String {
-        match self {
-            PlaySelector::Id { id } => format!("id={id}"),
-            PlaySelector::Playlist { name } => format!("playlist=\"{name}\""),
-            PlaySelector::TrackSearch {
-                track,
-                artist,
-                album,
-            } => {
-                let mut parts = vec![format!("track=\"{track}\"")];
-                if let Some(artist) = Self::format_artist(artist.as_deref()) {
-                    parts.push(artist);
-                }
-                if let Some(album) = album {
-                    parts.push(format!("album=\"{album}\""));
-                }
-                parts.join(", ")
-            }
-            PlaySelector::AlbumSearch { album, artist } => {
-                let mut parts = vec![format!("album=\"{album}\"")];
-                if let Some(artist) = Self::format_artist(artist.as_deref()) {
-                    parts.push(artist);
-                }
-                parts.join(", ")
-            }
-            PlaySelector::ArtistSearch { artist } => format!("artist=\"{artist}\""),
-        }
-    }
 
-    fn format_artist(artist: Option<&str>) -> Option<String> {
-        artist.map(|name| format!("artist=\"{name}\""))
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {

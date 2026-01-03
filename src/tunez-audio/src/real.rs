@@ -165,7 +165,7 @@ impl AudioEngine for CpalAudioEngine {
             stop_flag,
             join,
             stream_keepalive.clone(),
-            frames_played,
+            frames_played.clone(),
             sample_rate,
         );
 
